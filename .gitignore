@@ -1,0 +1,32 @@
+# dependencies / build output
+node_modules
+dist
+tsconfig.tsbuildinfo
+vite.config.ts.timestamp-*.mjs
+
+# test + audit output
+test-results
+playwright-report
+shots
+_work
+_probe.mjs
+
+# Vendored map assets — NOT committed, on purpose.
+#
+# ~21 MB of OpenStreetMap-derived vector tiles, glyphs and sprites from OpenFreeMap.
+# They are a third-party ODbL database, not our source, and a git repository is the
+# wrong place to redistribute one. Rebuild them in ~2 minutes with:
+#
+#     npm run tiles
+#
+# See docs/ARCHITECTURE.md ("Offline basemap") for what the pack contains and why the
+# map is bundled rather than fetched at runtime.
+public/tiles/
+public/fonts/
+public/sprite/
+public/styles/
+
+# editor / OS
+.DS_Store
+.vscode
+.idea

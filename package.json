@@ -1,0 +1,44 @@
+{
+  "name": "ptcc-demo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b --noCheck && vite build",
+    "typecheck": "tsc -b",
+    "preview": "npm run build && vite preview --host 127.0.0.1 --port 4173",
+    "tiles": "node tools/fetch-tiles.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "shots": "playwright test --config=playwright.shots.config.ts",
+    "verify": "node tools/integration-verify.mjs && node tools/journey-e2e.mjs && node tools/role-journey.mjs",
+    "audit": "playwright test --config=playwright.audit.config.ts uiaudit"
+  },
+  "dependencies": {
+    "echarts": "^5.5.1",
+    "maplibre-gl": "^4.7.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.21.5": true,
+    "esbuild@0.25.12": true
+  }
+}

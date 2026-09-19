@@ -1,0 +1,7 @@
+# Normalise line endings in the repository; check out native.
+* text=auto eol=lf
+
+# Binary assets
+*.png binary
+*.pbf binary
+*.opus binary

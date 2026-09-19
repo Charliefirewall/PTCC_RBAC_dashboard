@@ -1,0 +1,449 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens.
+ *
+ * TWO themes, both designed - not one inverted into the other.
+ *
+ * DARK is the control-room default: a 15 kW video wall in a >=300 lux room with
+ * reflection-controlled surfaces (L276-L296). Dark backgrounds cut glare and let the
+ * status colours carry the meaning. No pure white anywhere; no gloss (L296 "glossy
+ * surfaces avoided").
+ *
+ * LIGHT is for laptops, workshops and printed screenshots, where a dark UI in a bright
+ * meeting room washes out. Its status colours are DARKER than the dark theme's, not
+ * lighter - a #22c55e that reads well on #0a0d12 fails WCAG AA on white.
+ *
+ * Token groups that must never merge visually (source constraint):
+ *   sev-*      three ALERT levels      (L1182-L1185)
+ *   ev-*       five EVENT levels       (R1433-R1440)
+ * They are deliberately different hue families AND different shapes in the UI.
+ */
+
+@theme {
+  /* ---- surfaces (dark defaults; see [data-theme='light'] below) */
+  --color-bg0: #0a0d12;
+  --color-bg1: #111620;
+  --color-bg2: #171e2a;
+  --color-bg3: #1f2836;
+  /* The elevation tier §13.1 asks for. Without it a modal or drawer painted bg1 was
+     byte-identical to the panel behind it, and in the dark theme there is no shadow to
+     separate them either - the overlay simply did not read as floating. */
+  --color-bg-raised: #1c2432;
+  --color-line: #273241;
+  --color-line-soft: #1c2532;
+
+  /* ---- text */
+  --color-text1: #e7edf5;
+  --color-text2: #9caabb;
+  /* AA on EVERY surface, not just the three it was checked against. The old #7d8b9d was
+     4.28:1 on bg3 (#1f2836) and 4.49:1 on bg-raised, so every t-meta / panel-title inside
+     a bg3 cell - the depot heatmap legend, the health spec rows, the funnel cells - failed
+     AA. This value is >=4.82:1 on bg0/bg1/bg2/bg3/bg-raised. */
+  --color-text3: #8794a6;
+
+  /* ---- brand */
+  --color-accent: #4d8df0;
+  --color-accent-soft: #1b3355;
+  /* Foreground for text sitting on ANY saturated fill - accent, sev-crit, event
+     severity. White on the dark-theme accent is 3.29:1 (fails AA); near-black is
+     5.72:1. The light theme flips it, because its fills are themselves dark. Using a
+     literal text-black/text-white anywhere on a fill reintroduces the bug. */
+  --color-on-accent: #0a0d12;
+
+  /* ---- alert severity: THREE levels (L1182-L1185; S3/S10 colours) */
+  --color-sev-info: #4d8df0;
+  --color-sev-warn: #e0a02e;
+  --color-sev-crit: #ee5f63; /* 4.27:1 -> AA on bg2 */
+  --color-sev-ok: #37b978;
+
+  /* ---- event severity: FIVE levels (R1433-R1440). A different hue family on
+     purpose, so the two scales can never be confused on screen.
+     Nudged for AA on bg3 (#1f2836), which the original set was never checked against -
+     ev-critical was 3.79:1 there and crisis 3.48:1. Hue is unchanged; the shift is
+     lightness only, and it is invisible side by side. */
+  --color-ev-crisis: #c962f8;
+  --color-ev-critical: #f75a5f;
+  --color-ev-high: #e07b39;
+  --color-ev-medium: #d6a419;
+  --color-ev-low: #4d8df0;
+
+  /* ---- passenger load bands - Slide 8, the only threshold set in any source */
+  --color-load-90: #f75a5f;
+  --color-load-70: #e07b39;
+  --color-load-50: #d6b40f;
+  --color-load-30: #37b978;
+  --color-load-0: #6f9fd8;
+
+  /* ---- map legend - Slide 7 three-state, client-confirmed */
+  --color-map-normal: #4d8df0;
+  --color-map-slower: #e0a02e;
+  --color-map-disrupted: #e5484d;
+  --color-map-noservice: #5c6b7d;
+
+  /* ---- agent identity.
+     One hue owned by the AI layer and used NOWHERE else, so "the machine said this"
+     is legible at a glance and never confused with an operational status colour.
+     Tier 4 (conversational) is an ASSUMPTION; Tier 5 (autonomous) is out of scope. */
+  --color-agent: #8d7ef8;
+  --color-agent-soft: #2a2350;
+  --color-agent-2: #22d3ee;
+  --color-tier3: #14b8a6;
+  --color-tier4: #8d7ef8;
+
+  --font-sans: 'Inter', 'Noto Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', ui-monospace, monospace;
+}
+
+/*
+ * Layering scale. Every floating thing in the app takes its z-index from here and
+ * nowhere else - that is what makes "no unintentional overlap" checkable rather than
+ * a matter of opinion. Anything using a raw z-* utility is a bug.
+ */
+:root {
+  --z-base: 0;
+  --z-raised: 10;
+  --z-sticky: 20;
+  --z-dropdown: 100;
+  --z-drawer: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+  --z-badge: 500;
+
+  --shadow-panel: none;
+  /* Elevation ladder, §13.4. One shadow per layer of the --z-* scale, so "does this
+     float?" is answered by the token and not by each call site guessing an rgba(). */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 20px 56px rgba(0, 0, 0, 0.5);
+  --shadow-drawer: -12px 0 40px rgba(0, 0, 0, 0.4);
+  /* Was the whole elevation story and unused by anything that floats. STILL an alias of
+     --shadow-2 because src/map/** consumes it in three places (map/chrome.css x2,
+     modules/map/LiveMap.tsx x1) - it cannot be retired until the map migrates. Nothing
+     outside src/map/** may use it. */
+  --radius: var(--r-3);
+
+  /* Spacing and radius scale (plan v2 §13.4). Deliberately outside @theme so no
+     Tailwind utility is generated for them - they are consumed by hand-written CSS
+     and by arbitrary values, exactly like the --z-* and --shadow-* tokens above. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --r-1: 4px;
+  --r-2: 6px;
+  --r-3: 8px;
+  --r-pill: 999px;
+
+  /* Motion (plan v2 §13.4). All motion using these must stay inside the
+     prefers-reduced-motion guard already defined below. */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-1: 140ms;
+  --dur-2: 220ms;
+  --dur-3: 360ms;
+
+  color-scheme: dark;
+  --wall-scale: 1;
+}
+
+/* ---------------------------------------------------------------- light theme */
+
+[data-theme='light'] {
+  --color-bg0: #f4f6fa;
+  --color-bg1: #ffffff;
+  --color-bg2: #f7f9fc;
+  --color-bg3: #e8edf4;
+  --color-bg-raised: #ffffff;
+  --color-line: #dbe2ec;
+  --color-line-soft: #eaeff6;
+
+  --color-text1: #111827;
+  --color-text2: #4b5563;
+  --color-text3: #5c6875; /* >=4.84:1 on white, bg0, bg2 AND bg3 (was 4.28:1 on bg3) */
+
+  --color-accent: #215fe7;
+  --color-accent-soft: #dbe7fe;
+  --color-on-accent: #ffffff; /* 5.17:1 on the light accent */
+
+  /* Darker, not lighter - these sit on white. */
+  --color-sev-info: #1d4ed8;
+  --color-sev-warn: #9a5700; /* 4.15:1 -> 4.78:1 on bg3 */
+  --color-sev-crit: #c62828;
+  --color-sev-ok: #116840; /* 4.28:1 -> AA on bg3 */
+
+  --color-ev-crisis: #7e22ce;
+  --color-ev-critical: #c62828;
+  --color-ev-high: #ae4d03;
+  --color-ev-medium: #826512;
+  --color-ev-low: #1d4ed8;
+
+  --color-load-90: #c62828;
+  --color-load-70: #ae4d03;
+  --color-load-50: #826512;
+  --color-load-30: #0f7945;
+  --color-load-0: #406c9e;
+
+  --color-map-normal: #215fe7;
+  --color-map-slower: #ae4d03;
+  --color-map-disrupted: #c62828;
+  --color-map-noservice: #5c6875; /* was #94a3b8 - 2.18:1 as legend text on bg3 */
+
+  --color-agent: #6d28d9;
+  --color-agent-soft: #ede9fe;
+  --color-agent-2: #0e7490;
+  --color-tier3: #0f766e; /* 5.47:1 on white; the dark theme teal is 2.49:1 */
+  --color-tier4: #6d28d9;
+
+  /* Borders alone read as flat on white; panels get a whisper of elevation. */
+  --shadow-panel: 0 1px 2px rgba(16, 24, 40, 0.04);
+  /* On white the same opacities read as soot, so the light ladder is softer and bluer. */
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-2: 0 8px 24px rgba(16, 24, 40, 0.12);
+  --shadow-3: 0 20px 56px rgba(16, 24, 40, 0.18);
+  --shadow-drawer: -12px 0 40px rgba(16, 24, 40, 0.14);
+
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--color-bg0);
+  color: var(--color-text1);
+  font-family: var(--font-sans);
+  overflow: hidden;
+}
+
+/* Theme switches should feel deliberate, not jarring. Surfaces only - never text,
+   which would smear during the transition. */
+body,
+.panel {
+  transition: background-color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg3);
+  border-radius: var(--r-1);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- type scale
+   One size per purpose. Anything outside this set is an accident - 149 arbitrary
+   `text-[Npx]` utilities exist because the heading half of the scale (§13.3) was never
+   written down, so every call site invented its own step. */
+.t-hero {
+  font-size: 1.75rem; /* 28 */
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.t-page {
+  font-size: 1.25rem; /* 20 */
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.t-section {
+  font-size: 0.9375rem; /* 15 */
+  line-height: 1.3;
+  font-weight: 600;
+}
+.t-card {
+  font-size: 0.8125rem; /* 13 */
+  line-height: 1.3;
+  font-weight: 600;
+}
+/* KPI labels and table headers ONLY. It is the loudest thing in the scale for its size,
+   so anything else wearing it competes with the numbers. */
+.t-label {
+  font-size: 0.6875rem; /* 11 */
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text3);
+}
+.t-metric {
+  font-size: 1.75rem;
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.t-head {
+  font-size: 0.875rem;
+  line-height: 1.3;
+  font-weight: 600;
+}
+.t-body {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.t-meta {
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--color-text3);
+}
+
+.panel {
+  background: var(--color-bg1);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+}
+
+.panel-title {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text3);
+  font-weight: 600;
+}
+
+/* Focus is never removed, only restyled - keyboard operators exist. */
+/*
+ * Tailwind v4's preflight no longer sets `cursor: pointer` on buttons, so every
+ * interactive control in the app rendered with the default arrow - it worked, but it
+ * did not look clickable, and the UI audit could not tell a real control from a dead
+ * tab stop. Disabled controls keep the default cursor, which is the honest signal.
+ */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+summary {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--r-1);
+}
+
+/* Critical alert: two pulses then static. Nothing blinks forever in a control room. */
+@keyframes pulse-crit {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(229, 72, 77, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.45);
+  }
+}
+.pulse-crit {
+  animation: pulse-crit calc(var(--dur-3) * 2) ease-in-out 2;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.enter {
+  animation: fade-in var(--dur-2) var(--ease);
+}
+
+/* The agent "thinking" indicator. Three dots, bounded - it stops, because an agent
+   that appears to think forever reads as a hung UI. */
+@keyframes agent-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.agent-dot {
+  animation: agent-pulse 1.1s ease-in-out infinite;
+}
+.agent-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.agent-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes collapse-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.collapse-in {
+  animation: collapse-in var(--dur-1) var(--ease);
+}
+
+/* Tooltip entrance. Opacity ONLY: the element is positioned with a transform, so an
+   animation that also writes `transform` would fight it and the tip would jump. */
+@keyframes tip-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The Switch's real <input> is sr-only, so its own focus ring is invisible. Move the
+   ring onto the drawn track it stands behind - a keyboard user must see where they are. */
+.switch-track:has(~ input:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-crit,
+  .enter,
+  .agent-dot,
+  .collapse-in,
+  [role='tooltip'],
+  body,
+  .panel {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Wall mode: everything scales up for a 3 m x 10 m surface read at 3-8 m (L2217, L2353).
+ *
+ * --wall-scale is 2.2, budgeted for the client's actual 3840-wide signal. The same
+ * surface driven at 1920 has pixels that are already twice as big physically, so 2.2
+ * there is 2x too large and the fixed 3-band canvas - which never scrolls - simply cut
+ * two of the six KPI tiles off the bottom. The clamp keeps 2.2 at 3840 and scales it
+ * with the signal width below that; it is the RENDERED size that is clamped, so
+ * --wall-scale itself still reads 2.2 (the wall/preset contract other checks assert).
+ */
+.wall {
+  --wall-fs: min(calc(16px * var(--wall-scale)), calc(100vw / 109));
+  font-size: var(--wall-fs);
+}
+.wall .panel-title {
+  font-size: calc(var(--wall-fs) * 0.6875);
+}

@@ -1,0 +1,10 @@
+import { chromium } from '@playwright/test';
+const b=await chromium.launch({headless:true});
+const p=await (await b.newContext({viewport:{width:1680,height:950}})).newPage();
+await p.goto('http://127.0.0.1:4180/?role=operations_controller#/map',{waitUntil:'networkidle'});
+await p.waitForTimeout(8000);
+await p.evaluate(()=>window.__ptccMap.setZoom(15.6));
+await p.waitForTimeout(4000);
+await p.screenshot({path:'H:/Mongolia Bus Transport/_compare/ours/FINAL-map-z15.png'});
+console.log('captured z15.6');
+await b.close();

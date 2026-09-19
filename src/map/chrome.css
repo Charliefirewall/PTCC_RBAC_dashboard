@@ -1,0 +1,247 @@
+/*
+ * Token-based styling for the map's DOM chrome — cluster markers, popups and
+ * MapLibre's own NavigationControl / AttributionControl.
+ *
+ * GL paint properties cannot resolve `var()`, which is why `restyle()` exists in
+ * LiveMap.tsx. Everything in THIS file is real DOM, so it follows a theme swap
+ * with no JS at all: the rule is simply never to write a hex literal here.
+ *
+ * Imported by LiveMap.tsx after `maplibre-gl/dist/maplibre-gl.css`, so these
+ * selectors win on specificity ties. Scoped to `.ptcc-*` classes we pass through
+ * `Popup({ className })` / `Marker({ element })`, except for the control group,
+ * where MapLibre owns the markup.
+ */
+
+/* ---------------------------------------------------------------- clusters */
+
+.ptcc-cluster {
+  --cluster-size: 28px;
+  --cluster-tone: var(--color-map-normal);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: var(--cluster-size);
+  height: var(--cluster-size);
+  padding: 0;
+  border: 2px solid var(--cluster-tone);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg1) 82%, var(--cluster-tone));
+  color: var(--color-text1);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow-2);
+  transition: transform 120ms ease;
+}
+
+.ptcc-cluster:hover,
+.ptcc-cluster:focus-visible {
+  transform: scale(1.12);
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.ptcc-cluster-big {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cluster-tone);
+}
+
+.ptcc-cluster-small {
+  font-size: 9px;
+  color: var(--color-text3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ptcc-cluster {
+    transition: none;
+  }
+  .ptcc-cluster:hover,
+  .ptcc-cluster:focus-visible {
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------- popups */
+
+.ptcc-popup .maplibregl-popup-content {
+  padding: 8px 10px 9px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-bg1);
+  color: var(--color-text1);
+  box-shadow: var(--shadow-2);
+  font-size: 11px;
+}
+
+/* One tip colour per anchor — MapLibre draws the tip as a CSS triangle, so the
+   fill is whichever border edge faces the content. */
+.ptcc-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.ptcc-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.ptcc-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--color-bg1);
+}
+.ptcc-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.ptcc-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.ptcc-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--color-bg1);
+}
+.ptcc-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--color-bg1);
+}
+.ptcc-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--color-bg1);
+}
+
+.ptcc-popup .maplibregl-popup-close-button {
+  width: 20px;
+  height: 20px;
+  color: var(--color-text3);
+  background: transparent;
+  font-size: 15px;
+  line-height: 1;
+}
+.ptcc-popup .maplibregl-popup-close-button:hover {
+  color: var(--color-text1);
+  background: var(--color-bg3);
+}
+
+.ptcc-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 13rem;
+  padding-right: 12px; /* clear of the close button */
+}
+
+.ptcc-pop-id {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ptcc-pop-sub {
+  color: var(--color-text2);
+  font-size: 10px;
+}
+
+.ptcc-pop-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+  border-top: 1px solid var(--color-line-soft);
+}
+
+.ptcc-pop-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ptcc-pop-k {
+  color: var(--color-text3);
+}
+
+.ptcc-pop-v {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ptcc-pop-alert {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 5px;
+  border-left: 2px solid var(--pop-sev, var(--color-sev-info));
+  background: var(--color-bg2);
+  color: var(--color-text2);
+  line-height: 1.35;
+}
+
+.ptcc-pop-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--pop-sev, var(--color-sev-info));
+}
+
+.ptcc-pop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.ptcc-pop-btn {
+  padding: 3px 7px;
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  background: var(--color-bg2);
+  color: var(--color-text2);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.ptcc-pop-btn:hover {
+  border-color: var(--color-accent);
+  background: var(--color-bg3);
+  color: var(--color-text1);
+}
+.ptcc-pop-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------- MapLibre's own controls */
+
+.maplibregl-ctrl-group {
+  border: 1px solid var(--color-line);
+  background: var(--color-bg1);
+  box-shadow: var(--shadow-panel);
+}
+.maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--color-line);
+}
+.maplibregl-ctrl-group button:hover {
+  background: var(--color-bg3);
+}
+/* The zoom glyphs are dark-on-transparent SVG data URIs, unreadable on our dark
+   surfaces. Inverting is the only way in without shipping our own icons. */
+:root:not([data-theme='light']) .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1);
+}
+
+/*
+ * ODbL attribution: it is a LICENSING requirement that this be legible, and it was
+ * not. MapLibre ships `.maplibregl-ctrl-attrib.maplibregl-compact { background:#fff;
+ * color:#000 }` — two classes, so it out-specified the single-class rules below and
+ * won regardless of import order, leaving #000 text on our dark surface at 1.16:1.
+ * Both our selectors are therefore doubled up to match (0,2,0) and the `a` rule to
+ * (0,2,1), which beats MapLibre's own (0,1,1) link colour.
+ *
+ * `compact` is how the control is always constructed here (see LiveMap's
+ * AttributionControl), so this is not a hypothetical branch.
+ */
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-attrib.maplibregl-compact,
+.maplibregl-ctrl-attrib.maplibregl-compact-show {
+  background: color-mix(in srgb, var(--color-bg1) 80%, transparent) !important;
+  color: var(--color-text2);
+}
+.maplibregl-ctrl-attrib.maplibregl-compact a,
+.maplibregl-ctrl-attrib.maplibregl-compact-show a,
+.maplibregl-ctrl-attrib a {
+  color: var(--color-text1);
+  text-decoration: underline;
+}
+.maplibregl-ctrl-attrib-button,
+.maplibregl-ctrl-attrib.maplibregl-compact-show .maplibregl-ctrl-attrib-button {
+  background-color: color-mix(in srgb, var(--color-bg1) 80%, transparent);
+}
+:root:not([data-theme='light']) .maplibregl-ctrl-attrib-button {
+  filter: invert(1);
+}
