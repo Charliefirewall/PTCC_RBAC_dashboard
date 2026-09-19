@@ -1,0 +1,38 @@
+name: CI
+
+# Type-check, unit-test and build on every push and pull request.
+#
+# The browser suites (integration, journey, role-journey, UI audit) are NOT run here:
+# they need the ~21 MB offline tile pack, which is fetched from OpenFreeMap rather than
+# committed, and downloading a third-party database on every push is neither polite nor
+# fast. Run them locally with `npm run preview` then `npm run verify` — docs/TESTING.md
+# lists the full set and the current results.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build

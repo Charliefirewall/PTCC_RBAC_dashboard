@@ -11,6 +11,7 @@ Seven operator roles · 18 modules · 1,100 simulated buses on the real road net
 [![Vite](https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white)](https://vite.dev)
 [![Tailwind](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
 [![MapLibre](https://img.shields.io/badge/MapLibre-4.7-1E5CB3?logo=maplibre&logoColor=white)](https://maplibre.org)
+[![CI](https://github.com/Charliefirewall/PTCC_RBAC_dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/Charliefirewall/PTCC_RBAC_dashboard/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-147%20unit%20%2B%20130%20browser-3FB950)](#testing)
 
 ![Command Centre](docs/images/command-centre.png)
@@ -221,6 +222,11 @@ Three layers, because they fail in different ways. All figures below are from th
 | `tools/soak.mjs` | 14 min | Heap growth, DOM growth, tick-rate drift over a realistic demo length |
 
 **Soak result:** heap flat at 45 MB across 14 minutes, ~144 ticks/min steady, zero errors.
+
+**CI runs type-check, unit tests and the production build on every push.** The browser
+suites are deliberately not in CI — they need the offline tile pack, which is fetched from
+OpenFreeMap rather than committed, and re-downloading a third-party database on every push
+is neither polite nor fast. Run them locally: `npm run preview`, then `npm run verify`.
 
 > [!NOTE]
 > Every fix in this repository is pinned by a check that was **verified to fail without it** —

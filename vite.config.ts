@@ -17,5 +17,10 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // Vitest defaults to 5 s per test. The simulation cases tick a 1,100-vehicle world
+    // through six sim-hours and land at 5.0-5.5 s, so on a loaded machine or cold CI
+    // runner they were failing the timeout rather than the assertion - a suite that is
+    // green locally and red in CI teaches people to ignore it.
+    testTimeout: 30_000,
   },
 } as any);
