@@ -51,6 +51,13 @@ That last one is the most important file in the suite. It asserts the agent stag
 at `recommended`, that approval records a human decision and mutates nothing else, and that no
 decision object carries a callable anywhere — autonomous action must not be *representable*.
 
+> **One unit test needs the tile pack.** `roads.test.ts` checks that every routed corridor
+> vertex sits within 5 m of a real street centreline, which means reading the vector tiles off
+> disk. The pack is not committed, so on a clean clone that case **skips with a warning** rather
+> than asserting against an empty index — which would have quietly turned the strongest check in
+> the file into a check of nothing. `npm run tiles`, then it runs: **147 with tiles, 146 + 1
+> skipped without.** CI runs the second form.
+
 ### 2. Behaviour — Playwright against the production build
 
 | Script | Checks | Scope |
@@ -83,7 +90,7 @@ render". It drives real controls and asserts the store actually changed.
 
 | Suite | Result |
 |---|---|
-| Unit | **147 / 11 files** |
+| Unit | **147 / 11 files** (146 + 1 skipped without the tile pack) |
 | Typecheck · production build | clean |
 | Integration | **49 / 49** |
 | Journey | **16 / 16** |
@@ -142,6 +149,17 @@ section now routes through `about:blank` first.
 
 **A "no Confirm control" failure was a stale label.** After `Escalate` became `Escalate…`, a
 `/^assign$/` selector stopped matching. The label change was mine; so was the broken check.
+
+**A unit test silently depended on an uncommitted asset.** `roads.test.ts` reads the vector
+tiles from `public/`, which `.gitignore` excludes. It passed on every developer machine and
+failed on the first CI run with `expected 0 to be greater than 4000` — an empty index, not a
+broken road graph. Now skipped explicitly, loudly, with the command that enables it. CI found
+this within a minute of existing.
+
+**A slow test met a default timeout.** Vitest allows 5 s per test; the simulation cases tick a
+1,100-vehicle world through six sim-hours in 5.0–5.5 s. They failed on a loaded machine and
+passed on a quiet one — a flake that looks like nondeterminism but is not. `testTimeout` is now
+30 s, with the reason recorded at the setting.
 
 **An integration check asserted an empty screen.** `#/analytics` was asserted to show "no events
 yet" — true only because nothing had ever validated an alert. Once the shift handover seeded
