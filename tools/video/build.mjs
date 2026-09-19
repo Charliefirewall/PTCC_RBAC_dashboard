@@ -70,9 +70,16 @@ const ts = (sec, sep = ',') => {
 };
 const placed = cues.map((c) => ({ ...c, at: c.at + HEAD, until: c.until + HEAD }));
 
-// Sidecar SRT, for players and for anyone who wants to re-time or translate it.
+/*
+ * Sidecar SRT, for translation and re-timing - deliberately NOT named after the video and
+ * kept in its own folder. A player finds `<video-basename>.srt` sitting beside the file and
+ * loads it automatically, so the captions rendered TWICE: the burned-in set in the band,
+ * plus the player's own larger overlay straight across the interface.
+ */
+const srtDir = join(DIST, 'captions');
+mkdirSync(srtDir, { recursive: true });
 writeFileSync(
-  join(DIST, 'PTCC-Smart-Operation-Management-demo.srt'),
+  join(srtDir, 'PTCC-demo-captions-source.srt'),
   placed.map((c, i) => `${i + 1}\n${ts(c.at)} --> ${ts(c.until)}\n${c.text}\n`).join('\n'),
   'utf8',
 );
