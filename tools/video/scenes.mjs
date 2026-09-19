@@ -177,7 +177,16 @@ export const SCENES = [
 
   {
     id: '09-reach',
-    async go(p) { await hash(p, '#/command'); await wait(p, 1200); await lang(p, 'mn'); },
+    // Wall mode and Mongolian are both switched HERE, not mid-scene. Switching late
+    // remounted the map two seconds before the line "the map, the fonts, every asset is
+    // on board" - so that sentence played over a map still loading its streets.
+    async go(p) {
+      await hash(p, '#/command');
+      await wait(p, 800);
+      await lang(p, 'mn');
+      await p.evaluate(() => window.__ptcc.useSettings.setState({ mode: 'wall', preset: 'wall' }));
+      await wait(p, 4000); // let the wall layout draw its map before the line starts
+    },
     // Wall mode is set through the store, not by pressing W. The hotkey is deliberately
     // inert while an overlay is open (a presenter must not flip the wall from behind a
     // dialog), and an earlier take left a drawer open - so the keypress did nothing and
@@ -185,12 +194,11 @@ export const SCENES = [
 
     say: `It runs in English and in Mongolian, across every screen. It runs on the video wall, readable from across the room. And it runs with the network unplugged: the map, the fonts, every asset is on board. A control room should never go dark because a connection did.`,
     async act(p) {
+      // BOTH settings are already applied in go(). `preset` drives the 2.2x type scale,
+      // `mode` swaps in the wall LAYOUT; setting preset alone moves a CSS variable and
+      // changes nothing a viewer can see.
+      await wait(p, 4000);
       await freeze(p);
-      await wait(p, 8000);
-      // BOTH settings. `preset` drives the 2.2x type scale; `mode` swaps in the wall
-      // LAYOUT. Setting preset alone moved the CSS variable and changed nothing a viewer
-      // could see - the narration promised a video wall over an ordinary desktop screen.
-      await p.evaluate(() => window.__ptcc.useSettings.setState({ mode: 'wall', preset: 'wall' }));
       await wait(p, 6000);
     },
   },

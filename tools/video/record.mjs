@@ -7,7 +7,7 @@
  * script says so rather than silently letting the voice fall behind the picture.
  */
 import { chromium } from '@playwright/test';
-import { readFileSync, mkdirSync, renameSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { SCENES } from './scenes.mjs';
 
@@ -24,12 +24,20 @@ mkdirSync(RAW, { recursive: true });
 const browser = await chromium.launch({
   args: ['--hide-scrollbars', '--force-device-scale-factor=1', '--disable-gpu-vsync'],
 });
+// 1920x960, not 1080. The remaining 120px of the 1080p frame becomes a dedicated
+// caption band in build.mjs, so burned-in subtitles never sit on top of the interface.
+// Recording at the real height keeps the UI pixel-perfect - nothing is scaled later.
 const ctx = await browser.newContext({
-  viewport: { width: 1920, height: 1080 },
-  recordVideo: { dir: RAW, size: { width: 1920, height: 1080 } },
+  viewport: { width: 1920, height: 960 },
+  recordVideo: { dir: RAW, size: { width: 1920, height: 960 } },
   reducedMotion: 'no-preference',
 });
 const page = await ctx.newPage();
+// Recording starts the moment the page exists. Everything before the first scene -
+// navigation, waiting for the app, the settle - is head padding whose real length
+// varies run to run. MEASURE it: assuming a constant put the captions ~3s ahead of the
+// picture, which at a scene boundary means narrating the next screen over this one.
+const videoT0 = Date.now();
 
 const errs = [];
 page.on('pageerror', (e) => errs.push(e.message.slice(0, 120)));
@@ -37,7 +45,7 @@ page.on('pageerror', (e) => errs.push(e.message.slice(0, 120)));
 // The only load in the whole video. Everything after this is a store write or a hash.
 await page.goto(`${BASE}/`, { waitUntil: 'load' });
 await page.waitForFunction(() => Boolean(window.__ptcc), null, { timeout: 60_000 });
-await page.waitForTimeout(6000); // warm-up settles; not recorded against any narration
+await page.waitForTimeout(3000); // warm-up settles; must match HEAD in build.mjs
 
 // Freeze immediately, before a single scene plays. The narration quotes figures off the
 // Command Centre, and those figures climb as the simulation runs: leaving it live through
@@ -46,6 +54,10 @@ await page.waitForTimeout(6000); // warm-up settles; not recorded against any na
 // and the map scene is the one that starts the clock again.
 await page.evaluate(() => window.__ptcc.engine.pause());
 await page.waitForTimeout(500);
+
+const head = (Date.now() - videoT0) / 1000;
+writeFileSync(join(OUT, 'head.json'), JSON.stringify({ head: +head.toFixed(3) }));
+console.log(`measured head offset: ${head.toFixed(2)}s`);
 
 for (const scene of SCENES) {
   const hold = holdOf(scene.id);
