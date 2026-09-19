@@ -33,7 +33,7 @@ Seven operator roles · 18 modules · 1,100 simulated buses on the real road net
 
 - [What it does](#what-it-does) · [Quick start](#quick-start) · [The role model](#the-role-model)
 - [Governance](#governance-the-rules-the-ui-may-not-break) · [Architecture](#architecture) · [Testing](#testing)
-- [Project layout](#project-layout) · [Presenting](#presenting-the-demo) · [Known limits](#known-limits) · [Attribution](#attribution)
+- [Project layout](#project-layout) · [Presenting](#presenting-the-demo) · [Deployment](docs/DEPLOYMENT.md) · [Known limits](#known-limits) · [Attribution](#attribution)
 
 ---
 
@@ -81,6 +81,16 @@ For the demo itself use the production build — it is the artefact that goes in
 npm run preview    # builds, then serves on http://127.0.0.1:4173
 ```
 
+Or run the container, which needs no Node toolchain and fetches its own map pack:
+
+```bash
+docker compose up -d --build   # → http://localhost:8080
+```
+
+A 68.8 MB self-contained image: application, basemap, glyphs and sprite, served by nginx as
+a non-root user with a read-only root filesystem and **no runtime network access at all**.
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 > [!TIP]
 > **Turn your network off and reload.** The whole application keeps working: the basemap,
 > the fonts, the glyphs and the icon sprite are all served from `public/`. This is verified
@@ -99,6 +109,10 @@ npm run preview    # builds, then serves on http://127.0.0.1:4173
 | `npm run verify` | Integration, journey and per-role interaction suites (needs `:4173`) |
 | `npm run audit` | Full UI audit: 4 widths × 2 themes + video-wall mode |
 | `npm run typecheck` | `tsc -b`, no emit |
+| `docker compose up -d --build` | Build and run the production container on `:8080` |
+
+Every browser suite honours a `PTCC_BASE` override, so the same checks can be pointed at a
+container or a real deployment: `PTCC_BASE=https://ptcc.example.com npm run verify`.
 
 ---
 
@@ -223,7 +237,9 @@ Three layers, because they fail in different ways. All figures below are from th
 
 **Soak result:** heap flat at 45 MB across 14 minutes, ~144 ticks/min steady, zero errors.
 
-**CI runs type-check, unit tests and the production build on every push.** The browser
+**CI runs type-check, unit tests, the production build, and a Docker build that starts the
+container and asserts it actually serves the app — index.html, security headers, a vector
+tile with the right MIME type, and the Cyrillic glyph range.** The browser
 suites are deliberately not in CI — they need the offline tile pack, which is fetched from
 OpenFreeMap rather than committed, and re-downloading a third-party database on every push
 is neither polite nor fast. Run them locally: `npm run preview`, then `npm run verify`.
@@ -288,7 +304,9 @@ Named deliberately. This section is the point of the honesty stance above.
   bundled tiles contain no connected crossing at those zoom levels.
 - **Two strings clip at 1024 px.** Clean at 1280 and above; the demo is designed for ≥1280.
 - **Bus Operator OCC is read-only** — its dashboard reports but offers no action control.
-- **No real data connector, no authentication.** Both are FUTURE items, not oversights.
+- **No real data connector, no authentication.** Both are FUTURE items, not oversights. Role
+  selection is a demo convenience, not a security boundary — every role is reachable by URL,
+  and the app says so on screen. Put the container behind your own auth before exposing it.
 - The predictive model is a **deterministic duty-cycle model, not machine learning.** It has
   no trained parameters and was fitted to nothing, because there is no maintenance history to
   fit it to. Confidence is capped at 60 % and the screen says why.

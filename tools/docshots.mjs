@@ -6,7 +6,7 @@
 import { chromium } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 
-const BASE = 'http://127.0.0.1:4173';
+const BASE = process.env.PTCC_BASE ?? 'http://127.0.0.1:4173';
 const SHOTS = [
   { file: 'command-centre', url: '?role=operations_controller#/command', wait: 6000 },
   { file: 'live-fleet-map', url: '?role=supervisor#/map', wait: 8000 },

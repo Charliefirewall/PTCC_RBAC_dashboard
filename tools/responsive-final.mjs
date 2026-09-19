@@ -1,5 +1,5 @@
 import { chromium } from '@playwright/test';
-const B='http://127.0.0.1:4180';
+const B = process.env.PTCC_BASE ?? 'http://127.0.0.1:4173';
 const ROUTES=['dashboard','command','map','regularity','passenger','alerts','comms','health','operators',
               'copilot','agentic','roi','analytics','multimodal','settings','provenance','depot','platform'];
 const b=await chromium.launch({headless:true});

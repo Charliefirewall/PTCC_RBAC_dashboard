@@ -6,7 +6,7 @@
 import { chromium } from '@playwright/test';
 
 const MINUTES = Number(process.argv[2] || 12);
-const BASE = 'http://127.0.0.1:4173';
+const BASE = process.env.PTCC_BASE ?? 'http://127.0.0.1:4173';
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1600, height: 950 } });

@@ -11,7 +11,7 @@
 import { chromium } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 
-const BASE = process.env.BASE ?? 'http://127.0.0.1:4180';
+const BASE = process.env.PTCC_BASE ?? 'http://127.0.0.1:4173';
 const ORIGIN = new URL(BASE).origin;
 const SHOT = 'H:/Mongolia Bus Transport/_compare/ours/map-bundled.png';
 

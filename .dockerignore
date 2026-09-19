@@ -1,0 +1,33 @@
+# Keep the build context small and the layer cache honest: anything the image builds
+# for itself must not be copied in from the host.
+
+node_modules
+dist
+.git
+.github
+
+# Vendored map assets. The image fetches its own pack in a dedicated, separately cached
+# stage — copying a host pack in would make the build non-reproducible and silently
+# depend on whether the developer had run `npm run tiles`.
+public/tiles
+public/fonts
+public/sprite
+public/styles
+
+# test + audit output
+test-results
+playwright-report
+shots
+_work
+tsconfig.tsbuildinfo
+vite.config.ts.timestamp-*.mjs
+
+# docs and images are not needed to build or serve the app
+docs
+README.md
+*.md
+
+# editor / OS
+.DS_Store
+.vscode
+.idea

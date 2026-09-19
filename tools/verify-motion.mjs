@@ -1,5 +1,5 @@
 import { chromium } from '@playwright/test';
-const B = process.env.BASE ?? 'http://127.0.0.1:4180';
+const B = process.env.PTCC_BASE ?? 'http://127.0.0.1:4173';
 const pass=[],fail=[]; const ck=(c,m)=>(c?pass:fail).push(m);
 const b=await chromium.launch({headless:true});
 const p=await (await b.newContext({viewport:{width:1280,height:800}})).newPage();

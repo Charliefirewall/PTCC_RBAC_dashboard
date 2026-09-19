@@ -36,3 +36,63 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+  docker:
+    # Builds the production image and proves it actually serves the app, rather than
+    # proving only that the Dockerfile parses. The build fetches the ~21 MB asset pack
+    # from OpenFreeMap, so this job is slower than the one above by design.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ptcc-dashboard:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start container
+        run: docker run -d --name ptcc -p 8080:8080 ptcc-dashboard:ci
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/healthz >/dev/null; then
+              echo "healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "container never became healthy"; docker logs ptcc; exit 1
+
+      - name: Assert the app and its assets are actually served
+        run: |
+          set -euo pipefail
+
+          # index.html, and the security headers that a per-location add_header
+          # would silently drop (see docs/DEPLOYMENT.md).
+          curl -sf http://127.0.0.1:8080/ | grep -q '<div id="root">'
+          curl -sI http://127.0.0.1:8080/ | grep -qi 'x-content-type-options: nosniff'
+          curl -sI http://127.0.0.1:8080/ | grep -qi 'content-security-policy'
+          curl -sI http://127.0.0.1:8080/ | grep -qi 'cache-control: no-cache'
+
+          # A vector tile: correct MIME, and NOT double-encoded. A pre-gzipped .pbf
+          # served without the header renders an empty map with no error at all.
+          TILE=$(docker exec ptcc sh -c "find /usr/share/nginx/html/tiles -name '*.pbf' | head -1" | sed 's|/usr/share/nginx/html||')
+          echo "probing tile $TILE"
+          curl -sI "http://127.0.0.1:8080$TILE" | grep -qi 'content-type: application/x-protobuf'
+
+          # Glyphs must include the Cyrillic range, or Mongolian street labels vanish.
+          docker exec ptcc test -f "/usr/share/nginx/html/fonts/Noto Sans Regular/1024-1279.pbf"
+
+          echo "all container assertions passed"
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs ptcc
+

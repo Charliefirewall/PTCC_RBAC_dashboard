@@ -1,7 +1,7 @@
 // Finds containers that a parent flex column has SHRUNK below their content height
 // while overflow stays visible - the cause of panels painting over each other.
 import { chromium } from '@playwright/test';
-const BASE = 'http://127.0.0.1:4173';
+const BASE = process.env.PTCC_BASE ?? 'http://127.0.0.1:4173';
 const ROUTES = ['dashboard','command','map','regularity','passenger','alerts','comms','health','operators','copilot','agentic','roi','analytics','multimodal','settings','provenance','depot','platform'];
 const SIZES = (process.argv[2] || '1366x768,1920x1080').split(',').map((s) => s.split('x').map(Number));
 const browser = await chromium.launch();

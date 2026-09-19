@@ -5,7 +5,7 @@
  */
 import { chromium } from '@playwright/test';
 
-const BASE = 'http://127.0.0.1:4173';
+const BASE = process.env.PTCC_BASE ?? 'http://127.0.0.1:4173';
 let pass = 0;
 let fail = 0;
 const ck = (ok, msg) => {

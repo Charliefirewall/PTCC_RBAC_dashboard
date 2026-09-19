@@ -1,5 +1,5 @@
 import { chromium } from '@playwright/test';
-const B = 'http://127.0.0.1:4180';
+const B = process.env.PTCC_BASE ?? 'http://127.0.0.1:4173';
 const OUT = 'H:/Mongolia Bus Transport/_compare/ours';
 const pass = [], fail = [];
 const ck = (c, m) => (c ? pass : fail).push(m);
