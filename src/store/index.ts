@@ -33,7 +33,7 @@ import {
 } from '../rules/playbooks';
 import { DEMO_DEFAULTS, type Thresholds } from '../rules/thresholds';
 import { can } from '../modules/roles/roles';
-import { runSop } from './sop';
+import { runSop, tickComms } from './sop';
 import { maybeForecast, useForecast } from './forecast';
 import { SIM_DOW } from '../sim/baseline';
 
@@ -450,7 +450,7 @@ interface CommsState {
   revoke(communication_id: string, by: string): boolean;
 }
 
-function audit(action: string, target: string, actor: string, detail?: string): void {
+export function audit(action: string, target: string, actor: string, detail?: string): void {
   useEvents.setState((s) => ({
     audit: [
       { at: isoAt(world.sim_time_s), actor, role: useSettings.getState().role, action, target, detail },
@@ -624,7 +624,7 @@ export function reevaluate(): void {
   const { alerts: evaluated } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
   const alerts = runSop(evaluated, snap.sim_time_s);
   // thresholds or the baseline day changed: the forecast must follow immediately
-  maybeForecast(world, metrics, th, useSettings.getState().dow, true);
+  maybeForecast(world, metrics, th, useSettings.getState().dow, alerts, true);
   useSim.setState({ metrics });
   useAlerts.setState({ alerts });
 }
@@ -635,7 +635,8 @@ export function startBridge(): () => void {
     const metrics = deriveMetrics(snap, th);
     const { alerts: evaluated } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
     const alerts = runSop(evaluated, snap.sim_time_s);
-    maybeForecast(world, metrics, th, useSettings.getState().dow);
+    maybeForecast(world, metrics, th, useSettings.getState().dow, alerts);
+    tickComms(snap.sim_time_s);
 
     history.t.push(snap.sim_time_s);
     history.kpi.in_service.push(metrics.in_service);

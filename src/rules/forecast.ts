@@ -37,6 +37,8 @@ export type ForecastAlert = Alert & {
   probability: number;
   confidence: number;
   level: 1 | 2 | 3;
+  /** E6: route rows carry the model's terms so the UI can explain the number */
+  terms?: RouteForecast['terms'];
 };
 
 /** Standard normal CDF (Abramowitz-Stegun 7.1.26, |err| < 1.5e-7). */
@@ -65,6 +67,8 @@ export interface RouteForecast {
   mu_s: number;
   sd_s: number;
   confidence: number;
+  /** E6: the printable terms, for the "How the forecast works" panel. */
+  terms: { norm_now_s: number; norm_h_s: number; drift_s: number; seg_s: number; fade: number; tau_min: number };
 }
 
 /** The distribution of route mean deviation h minutes from now. Pure. */
@@ -92,7 +96,10 @@ export function forecastRoute(w: World, route_id: string, live_mean_dev_s: numbe
   const sd_s = Math.sqrt(normH.sd ** 2 + (0.5 * Math.abs(drift) * (1 - fade)) ** 2 + (SD_PER_MIN_S * h) ** 2);
   const obsFrac = edges.length ? observed / edges.length : 0;
   const confidence = Math.min(CONFIDENCE_CEILING, CONFIDENCE_CEILING * (1 - h / 150) * (0.5 + 0.5 * obsFrac));
-  return { route_id, h, mu_s, sd_s, confidence };
+  return {
+    route_id, h, mu_s, sd_s, confidence,
+    terms: { norm_now_s: normNow.mean, norm_h_s: normH.mean, drift_s: drift, seg_s: seg, fade, tau_min },
+  };
 }
 
 /** P(deviation >= threshold_s). */
@@ -146,6 +153,7 @@ export function computeForecast(
         bus: worst.get(f.route_id)?.vehicle_id ?? '',
         iso,
         now: w.sim_time_s,
+        terms: f.terms,
       }));
     }
     if (n >= th.routes_affected_l2) {
@@ -178,6 +186,7 @@ function row(
   x: {
     route_id?: string; level: 1 | 2 | 3; n: number; h: number; thr: number; probability: number;
     confidence: number; mu_min: number; pax: number; bus?: string; routes?: string; iso: string; now: number;
+    terms?: RouteForecast['terms'];
   },
 ): ForecastAlert {
   const severity = LEVEL_SEVERITY[x.level];
@@ -202,7 +211,33 @@ function row(
     horizon_min: x.h,
     probability: x.probability,
     confidence: x.confidence,
+    terms: x.terms,
   };
+}
+
+export interface WatchItem {
+  route_id: string;
+  h: number;
+  /** chance of reaching L1 at the horizon - below the listing chance by definition */
+  probability: number;
+  mu_min: number;
+}
+
+/**
+ * E8: the routes closest to being listed, so the Forecast tab is never an empty page in a
+ * quiet network. A route is listed exactly when its L1 chance reaches the listing chance
+ * (the quantile rule in computeForecast), so "below" here is the complement.
+ */
+export function watchList(w: World, m: DerivedMetrics, th: Thresholds, dow: number, h: number, n = 5): WatchItem[] {
+  const pMin = th.forecast_min_probability_pct / 100;
+  const out: WatchItem[] = [];
+  for (const rm of m.per_route.values()) {
+    if (!rm.vehicles || !w.routeById.get(rm.route_id)?.active) continue;
+    const f = forecastRoute(w, rm.route_id, rm.mean_dev_s, h, dow, th.forecast_drift_tau_min);
+    const p = chance(f, th.delay_l1_min * 60);
+    if (p < pMin) out.push({ route_id: rm.route_id, h, probability: p, mu_min: f.mu_s / 60 });
+  }
+  return out.sort((a, b) => b.probability - a.probability || (a.route_id < b.route_id ? -1 : 1)).slice(0, n);
 }
 
 /** Per-stop forecast for the rest of a bus's current trip (drill-down + route profile). */

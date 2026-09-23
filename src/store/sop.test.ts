@@ -5,7 +5,8 @@ import type { Alert } from '../sim/types';
 (globalThis as unknown as { location: { search: string; hash: string } }).location ??= { search: '', hash: '' };
 
 const { useComms, useEvents, useSettings } = await import('./index');
-const { runSop, resetSop, SOP_REPEAT_S } = await import('./sop');
+const { runSop, resetSop, SOP_REPEAT_S, SOP_COUNTDOWN_S, useSop, cancelL1, tickComms, TCC_ACK_S } = await import('./sop');
+const { simSecondsOf } = await import('../sim/engine');
 
 const alert = (level: 1 | 2 | 3): Alert => ({
   id: 'delay_sop:R7', rule_id: 'delay_sop', type: 'service_deviation', severity: 'informational', route_id: 'R7',
@@ -13,6 +14,12 @@ const alert = (level: 1 | 2 | 3): Alert => ({
   raised_at: '', raised_at_s: 0, metric: { name: 'delay_min', value: 6, threshold: 5, unit: 'min' },
   pax_affected: 10, impact_score: 20, tier: 1, acknowledged: false, level,
 });
+
+/** Raise an L1 and let its countdown run out. */
+function sendL1(t0: number) {
+  runSop([alert(1)], t0);
+  runSop([alert(1)], t0 + SOP_COUNTDOWN_S);
+}
 
 describe('SOP execution', () => {
   beforeEach(() => {
@@ -22,8 +29,37 @@ describe('SOP execution', () => {
     useSettings.setState({ l1_auto_exec: true, role: 'operations_controller' });
   });
 
-  it('L1 sends exactly one automatic notification and audits it', () => {
-    const out = runSop([alert(1)], 1000);
+  it('L1 waits a visible countdown before sending (E2)', () => {
+    runSop([alert(1)], 1000);
+    expect(useComms.getState().coordination).toHaveLength(0);
+    expect(useSop.getState().pending['delay_sop:R7']).toBe(1000 + SOP_COUNTDOWN_S);
+    runSop([alert(1)], 1000 + SOP_COUNTDOWN_S - 5);
+    expect(useComms.getState().coordination).toHaveLength(0);
+  });
+
+  it('a controller can cancel inside the countdown; nothing is sent and it is audited (E2)', () => {
+    runSop([alert(1)], 1000);
+    useSettings.setState({ role: 'field_inspector' });
+    expect(cancelL1('delay_sop:R7', 'fi')).toBe(false);
+    useSettings.setState({ role: 'operations_controller' });
+    expect(cancelL1('delay_sop:R7', 'oc')).toBe(true);
+    runSop([alert(1)], 1000 + SOP_COUNTDOWN_S + 5);
+    expect(useComms.getState().coordination).toHaveLength(0);
+    expect(useSop.getState().pending['delay_sop:R7']).toBeUndefined();
+    expect(useEvents.getState().audit[0]!.action).toBe('auto_exec_cancelled');
+  });
+
+  it('drops the countdown if the alert clears before it fires (E2)', () => {
+    runSop([alert(1)], 1000);
+    runSop([], 1010);
+    runSop([alert(1)], 1000 + SOP_COUNTDOWN_S + 1);
+    // re-raised: a fresh countdown, not an immediate send
+    expect(useComms.getState().coordination).toHaveLength(0);
+  });
+
+  it('L1 sends exactly one automatic notification when the countdown ends, and audits it', () => {
+    runSop([alert(1)], 1000);
+    const out = runSop([alert(1)], 1000 + SOP_COUNTDOWN_S);
     const c = useComms.getState().coordination;
     expect(c).toHaveLength(1);
     expect(c[0]!.auto).toBe(true);
@@ -35,13 +71,14 @@ describe('SOP execution', () => {
   });
 
   it('does not repeat inside the window, and does nothing when switched off', () => {
-    runSop([alert(1)], 1000);
+    sendL1(1000);
     runSop([alert(1)], 1000 + SOP_REPEAT_S - 5);
+    runSop([alert(1)], 1000 + SOP_REPEAT_S);
     expect(useComms.getState().coordination).toHaveLength(1);
     resetSop();
     useComms.setState({ coordination: [] });
     useSettings.setState({ l1_auto_exec: false });
-    runSop([alert(1)], 1000);
+    sendL1(1000);
     expect(useComms.getState().coordination).toHaveLength(0);
   });
 
@@ -69,7 +106,7 @@ describe('SOP execution', () => {
   });
 
   it('revoke is permission-gated and audited', () => {
-    runSop([alert(1)], 1000);
+    sendL1(1000);
     const id = useComms.getState().coordination[0]!.communication_id;
     useSettings.setState({ role: 'field_inspector' });
     expect(useComms.getState().revoke(id, 'fi')).toBe(false);
@@ -87,5 +124,28 @@ describe('SOP execution', () => {
     useSettings.setState({ role: 'incident_manager' });
     expect(useComms.getState().sendDraft(id, 'im')).toBe(true);
     expect(useComms.getState().coordination[0]!.status).toBe('sent');
+  });
+
+  it('TCC acknowledges a sent request after a simulated delay, audited (E3)', () => {
+    runSop([alert(3)], 1000);
+    const id = useComms.getState().coordination[0]!.communication_id;
+    useSettings.setState({ role: 'incident_manager' });
+    useComms.getState().sendDraft(id, 'im');
+    const sent = simSecondsOf(useComms.getState().coordination[0]!.sent_at);
+    tickComms(sent + TCC_ACK_S - 1);
+    expect(useComms.getState().coordination[0]!.acknowledged_at).toBeUndefined();
+    tickComms(sent + TCC_ACK_S);
+    const m = useComms.getState().coordination[0]!;
+    expect(m.acknowledged_at).toBeTruthy();
+    expect(m.ack_text).toMatch(/TCC/);
+    expect(useEvents.getState().audit[0]!.action).toBe('tcc_ack');
+    tickComms(sent + TCC_ACK_S + 100);
+    expect(useEvents.getState().audit.filter((x) => x.action === 'tcc_ack')).toHaveLength(1);
+  });
+
+  it('an unsent draft is never acknowledged (E3)', () => {
+    runSop([alert(3)], 1000);
+    tickComms(99_999);
+    expect(useComms.getState().coordination[0]!.acknowledged_at).toBeUndefined();
   });
 });

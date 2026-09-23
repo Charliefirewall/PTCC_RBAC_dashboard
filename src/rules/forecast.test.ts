@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildWorld } from '../data/build';
 import { SimEngine } from '../sim/engine';
 import { deriveMetrics } from './evaluate';
-import { chance, computeForecast, forecastRoute, forecastStops, HORIZONS, phi, phiInv } from './forecast';
+import { chance, computeForecast, forecastRoute, forecastStops, HORIZONS, phi, phiInv, watchList } from './forecast';
 import { CONFIDENCE_CEILING } from './predict';
 import { DEMO_DEFAULTS } from './thresholds';
 
@@ -29,6 +29,16 @@ describe('forecast over the real world', () => {
   const w = buildWorld(20260921, 7 * 3600 + 40 * 60);
   const e = new SimEngine(w);
   for (let i = 0; i < 240; i++) e.tick();
+
+  it('explains itself: normal + fading difference-from-normal + slow roads (E6)', () => {
+    const base = forecastRoute(w, 'R7', 0, 30, 0, 30);
+    const late = forecastRoute(w, 'R7', base.terms.norm_now_s + 600, 30, 0, 30);
+    expect(late.terms.drift_s).toBeCloseTo(600, 3);
+    expect(late.terms.fade).toBeCloseTo(0.3679, 3); // e^(-30/30)
+    expect(late.terms.norm_h_s).toBeCloseTo(base.terms.norm_h_s, 6);
+    // the headline number is exactly the sum the panel prints
+    expect(late.mu_s).toBeCloseTo(late.terms.norm_h_s + (late.terms.drift_s + late.terms.seg_s) * late.terms.fade, 6);
+  });
 
   it('widens the spread and lowers confidence with horizon, never above the ceiling', () => {
     const f = HORIZONS.map((h) => forecastRoute(w, 'R7', 0, h, 0, th.forecast_drift_tau_min));
@@ -68,6 +78,18 @@ describe('forecast over the real world', () => {
     // fewer rows (or lower levels) as the disturbance fades
     const score = (h: 15 | 60) => a[h].reduce((s, x) => s + x.level, 0);
     expect(score(60)).toBeLessThanOrEqual(score(15));
+  });
+
+  it('keeps a watch list of the 5 most at-risk routes that are below the listing chance (E8)', () => {
+    const m = deriveMetrics(e.snapshot(), th);
+    const listed = new Set(computeForecast(w, m, th, 0)[30].map((x) => x.route_id));
+    const watch = watchList(w, m, th, 0, 30);
+    expect(watch).toHaveLength(5);
+    for (const x of watch) {
+      expect(listed.has(x.route_id)).toBe(false);
+      expect(x.probability).toBeLessThan(th.forecast_min_probability_pct / 100);
+    }
+    for (let i = 1; i < watch.length; i++) expect(watch[i - 1]!.probability).toBeGreaterThanOrEqual(watch[i]!.probability);
   });
 
   it('raising the minimum chance lists fewer rows', () => {

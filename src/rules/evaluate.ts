@@ -17,6 +17,7 @@ import type { Alert, AlertType, OperatorId, Route, Severity, SimSnapshot, Vehicl
 import { classifyHeadways, headwaysAlongRoute, routeDeviationStats } from './regularity';
 import type { Thresholds } from './thresholds';
 import { LEVEL_SEVERITY, sopLevel } from './severity';
+import { segmentName } from '../data/segments';
 
 export interface RouteMetrics {
   route_id: string;
@@ -298,12 +299,24 @@ export function evaluateRules(
   if (nAffected >= th.routes_affected_l2) {
     const maxMin = late[0]!.mean_dev_s / 60;
     const level = sopLevel(maxMin, nAffected, th) as 1 | 2 | 3;
+    // E1: say WHERE - the road segment shared by the most late routes ("Peace Ave jam").
+    // ponytail: English place names in params; the rules layer does not know the UI language.
+    const shared = new Map<string, number>();
+    for (const rm of late) for (const e of byId.get(rm.route_id)?.edges ?? []) shared.set(e.key, (shared.get(e.key) ?? 0) + 1);
+    const corridor_key = [...shared].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0] ?? '';
     raws.push({
       rule_id: 'delay_network',
       type: 'service_deviation',
       severity: LEVEL_SEVERITY[level],
       title_key: 'alert.delay_network',
-      params: { n: nAffected, min: Math.round(maxMin), level, routes: late.slice(0, 5).map((r) => r.route_id).join(', ') },
+      params: {
+        n: nAffected,
+        min: Math.round(maxMin),
+        level,
+        routes: late.slice(0, 5).map((r) => r.route_id).join(', '),
+        corridor_key,
+        corridor: corridor_key ? segmentName(corridor_key) : '—',
+      },
       metric: { name: 'routes_affected', value: nAffected, threshold: th.routes_affected_l2, unit: '' },
       pax_affected: late.reduce((s2, r) => s2 + r.pax, 0),
       load_pct: 0,

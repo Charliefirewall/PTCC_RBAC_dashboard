@@ -32,6 +32,15 @@ export const SIM_DOW = 0;
 export const DOW_FACTOR = [1.05, 1.0, 1.0, 1.0, 1.15, 0.7, 0.55] as const;
 const Z90 = 1.2816;
 
+/** Chronic hotspots by design (E11): central corridor stretches, canonical keys. */
+export const HOT_SEGMENTS: readonly string[] = [
+  'n-ard|n-peace-w', // Ard Cinema - Peace Ave West
+  'n-peace-w|n-sukhbaatar', // Peace Ave West - Sukhbaatar Square
+  'n-3r4r|n-bayangol', // Bayangol - 3rd & 4th Khoroolol
+  'n-bayangol|n-dragon', // Dragon terminal - Bayangol
+  'n-officers|n-sukhbaatar', // Sukhbaatar Square - Officers' Palace
+];
+
 export function bucketOf(sim_s: number): number {
   const b = Math.floor(((sim_s % 86400) - SERVICE_START_S) / (BUCKET_MIN * 60));
   return b < 0 ? 0 : b >= BUCKETS ? BUCKETS - 1 : b;
@@ -85,11 +94,10 @@ export function buildBaseline(seed: number, routes: readonly Route[]): Baseline 
   const mean = new Float32Array(N);
   const sd = new Float32Array(N);
 
-  // A handful of chronically slow central/arterial segments - the ones scenario 3b
-  // should surface. Seeded, so the same edges are "hot" in every session.
-  const candidates = keys.filter((k) => segmentCentrality(k) >= 1);
-  const hot = new Set<string>();
-  while (hot.size < Math.min(5, candidates.length)) hot.add(candidates[Math.floor(rng.next() * candidates.length)]!);
+  // The chronically slow segments scenario 3b should surface - pinned to stretches a UB
+  // audience recognises (Peace Ave, Dragon terminal, Sukhbaatar Sq) rather than drawn at
+  // random, so the top-5 reads the way the room expects. Still fully synthetic.
+  const hot = new Set<string>(HOT_SEGMENTS.filter((k) => index.has(k)));
 
   keys.forEach((k, s) => {
     const c = segmentCentrality(k);

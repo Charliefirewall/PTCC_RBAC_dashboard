@@ -357,6 +357,9 @@ export interface CoordinationMessage {
   alert_id?: string;
   revoked_at?: string;
   revoked_by?: string;
+  /** E3: SIMULATED reply from the recipient (TCC) - no real PTCC-TCC link exists (R967). */
+  acknowledged_at?: string;
+  ack_text?: string;
 }
 
 // ---------------------------------------------------------------- roles

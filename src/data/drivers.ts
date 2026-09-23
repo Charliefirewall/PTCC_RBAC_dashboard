@@ -49,3 +49,14 @@ export function driverOf(driver_id: string, operator_id: OperatorId): Driver {
     years: 1 + Math.floor(r.next() * 20),
   };
 }
+
+/**
+ * E17: fictional names are shown MASKED ("B. Bat-E*****") - the panel stays rich, and
+ * nobody mistakes a placeholder for a real person. Keeps the initial and 5 letters.
+ */
+export function maskName(name: string): string {
+  const m = /^(\S+\s)(.*)$/u.exec(name);
+  const [head, body] = m ? [m[1]!, m[2]!] : ['', name];
+  const chars = [...body];
+  return head + chars.slice(0, 5).join('') + '*'.repeat(Math.max(0, chars.length - 5));
+}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deriveMetrics, evaluateRules, makeHysteresis } from './evaluate';
 import { PLAYBOOKS, gateStageFor, playbookFor } from './playbooks';
 import { DEMO_DEFAULTS } from './thresholds';
+import { buildWorld } from '../data/build';
 import type { Route, SimSnapshot, Vehicle } from '../sim/types';
 
 const th = { ...DEMO_DEFAULTS };
@@ -89,5 +90,20 @@ describe('delay playbooks', () => {
     for (const id of ['delay_l1', 'delay_l2', 'delay_l3'] as const) {
       expect(PLAYBOOKS[id].recommended.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('network delay names its corridor (E1)', () => {
+  it('names the road segment most of the late routes share', () => {
+    const w = buildWorld(20260921, 8 * 3600);
+    const late = ['R3', 'R4', 'R12', 'R21', 'R22'];
+    for (const v of w.vehicles) if (late.includes(v.route_id) && v.status === 'in_service') v.schedule_deviation = 9 * 60;
+    const snap: SimSnapshot = { sim_time_s: w.sim_time_s, iso: '', vehicles: w.vehicles, routes: w.routes, feed_stale: false };
+    const net = evaluateRules(snap, deriveMetrics(snap, th), th, [], makeHysteresis()).alerts.find((a) => a.rule_id === 'delay_network')!;
+    const key = String(net.params.corridor_key);
+    const sharing = late.filter((id) => w.routeById.get(id)!.edges!.some((e) => e.key === key));
+    expect(sharing.length).toBeGreaterThanOrEqual(3);
+    expect(String(net.params.corridor)).toMatch(/.+ – .+/);
+    expect(net.title_key).toBe('alert.delay_network');
   });
 });

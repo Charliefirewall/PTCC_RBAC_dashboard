@@ -18,7 +18,7 @@ export const sopDict = {
   'th.forecast_refresh_s': { en: 'Forecast — refresh interval', mn: 'Таамаг — шинэчлэх давтамж' },
 
   // ---------------------------------------------------------------- alerts
-  'alert.delay_network': { en: '{n} routes delayed — worst {min} min', mn: '{n} чиглэл хоцорч байна — хамгийн их {min} мин' },
+  'alert.delay_network': { en: '{n} routes delayed — worst {min} min · {corridor}', mn: '{n} чиглэл хоцорч байна — хамгийн их {min} мин · {corridor}' },
 
   // ---------------------------------------------------------------- playbook actions
   'pb.monitor_recovery': { en: 'Monitor recovery for 15 min', mn: '15 минут сэргэлтийг хянах' },
@@ -54,8 +54,12 @@ export const sopDict = {
     mn: 'PTCC хамтын ажиллагааны хүсэлт: {route} чиглэл {min} минут хоцорсон. Нөлөөлөлд өртсөн коридорт гэрлэн дохионы хуваарь хянах, замын туслалцаа хүсье.',
   },
   'sop.l3.draftNet': {
-    en: 'PTCC coordination request: {n} routes delayed (worst {min} min: {routes}). Request TCC signal-timing review and traffic assistance on the affected corridors.',
-    mn: 'PTCC хамтын ажиллагааны хүсэлт: {n} чиглэл хоцорсон (хамгийн их {min} мин: {routes}). Нөлөөлөлд өртсөн коридоруудад гэрлэн дохионы хуваарь хянах, замын туслалцаа хүсье.',
+    en: 'PTCC coordination request: {n} routes delayed (worst {min} min: {routes}), mainly on {corridor}. Request TCC signal-timing review and traffic assistance on that corridor.',
+    mn: 'PTCC хамтын ажиллагааны хүсэлт: {n} чиглэл хоцорсон (хамгийн их {min} мин: {routes}), голчлон {corridor}. Тухайн коридорт гэрлэн дохионы хуваарь хянах, замын туслалцаа хүсье.',
+  },
+  'sop.tccAck': {
+    en: 'TCC acknowledged (SIMULATED): signal-timing review started, traffic unit informed.',
+    mn: 'ЗХУТ хүлээн авлаа (ЗАГВАРЧИЛСАН): гэрлэн дохионы хуваарийн хяналт эхэлсэн, замын хэсэгт мэдэгдсэн.',
   },
   'sop.policy': {
     en: 'L1 auto-sends a notification only — it never moves a bus or changes service. Every send is audited and can be revoked.',

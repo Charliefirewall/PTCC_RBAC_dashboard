@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRoutes, buildWorld } from '../data/build';
 import { deriveMetrics } from '../rules/evaluate';
 import { DEMO_DEFAULTS } from '../rules/thresholds';
-import { BUCKETS, bucketOf, buildBaseline, liveSegExcess } from './baseline';
+import { BUCKETS, bucketOf, buildBaseline, HOT_SEGMENTS, liveSegExcess } from './baseline';
 import { SimEngine } from './engine';
 
 const SEED = 20260921;
@@ -19,6 +19,17 @@ describe('synthetic Mon-Sun baseline', () => {
     expect(again.segExcess(k, 2, 10)).toEqual(base.segExcess(k, 2, 10));
     const diff = base.segKeys.some((key) => base.segExcess(key, 0, 8).mean !== other.segExcess(key, 0, 8).mean);
     expect(diff).toBe(true);
+  });
+
+  it('puts the chronic hotspots on roads a UB audience recognises', () => {
+    // E11: the five slowest-by-design segments are named central corridor stretches
+    expect([...HOT_SEGMENTS].sort()).toEqual([
+      'n-3r4r|n-bayangol', 'n-ard|n-peace-w', 'n-bayangol|n-dragon', 'n-officers|n-sukhbaatar', 'n-peace-w|n-sukhbaatar',
+    ]);
+    const midday = bucketOf(12 * 3600);
+    const hotMean = HOT_SEGMENTS.map((k) => base.segExcess(k, 0, midday).mean);
+    const others = base.segKeys.filter((k) => !HOT_SEGMENTS.includes(k)).map((k) => base.segExcess(k, 0, midday).mean);
+    expect(Math.min(...hotMean)).toBeGreaterThan(Math.max(...others));
   });
 
   it('covers every corridor edge used by a route, 7 days x 60 buckets', () => {
