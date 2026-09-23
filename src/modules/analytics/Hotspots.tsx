@@ -8,7 +8,9 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useSelection, useSettings, useSim, world } from '../../store';
+import { useComms, useSelection, useSettings, useSim, world } from '../../store';
+import { overlay } from '../../store/overlay';
+import { can } from '../roles/roles';
 import { baselineOf, bucketOf, liveSegExcess, SIM_DOW } from '../../sim/baseline';
 import { segmentName } from '../../data/segments';
 import { EChart, AXIS, CHART_BASE } from '../../charts/EChart';
@@ -16,7 +18,7 @@ import { Button, DataTable, Panel, type Column } from '../../components/primitiv
 import { Select } from '../../components/kit';
 import { useLang, useT } from '../../i18n/t';
 import type { I18nKey } from '../../i18n/dict';
-import { hotspotAction, rankHotspots, WINDOWS, type Hotspot, type HotspotWindow } from './hotspotRank';
+import { draftFor, hotspotAction, rankHotspots, WINDOWS, type Hotspot, type HotspotWindow } from './hotspotRank';
 
 const EM_DASH = '—';
 
@@ -33,7 +35,9 @@ export default function Hotspots() {
   const setDow = useSettings((s) => s.setDow);
   const theme = useSettings((s) => s.theme);
   const tick = useSim((s) => s.tick);
+  const role = useSettings((s) => s.role);
   const [win, setWin] = useState<HotspotWindow>('am');
+  const [drafted, setDrafted] = useState<ReadonlySet<string>>(new Set());
   const base = baselineOf(world);
 
   const top = useMemo(() => rankHotspots(base, world.routes.filter((r) => r.active), dow, win), [base, dow, win]);
@@ -70,7 +74,34 @@ export default function Hotspots() {
     { key: 'impact_s', label: t('hs.col.lost'), num: true, render: (r) => (r.impact_s / 60).toFixed(1) },
     { key: 'live', label: t('hs.col.live'), num: true, render: (r) => (r.live === null ? EM_DASH : r.live.toFixed(1)) },
     { key: 'action', label: t('hs.col.action'), render: (r) => t(r.action) },
+    {
+      key: 'draft',
+      label: t('hs.col.draft'),
+      sortable: false,
+      render: (r) => {
+        const done = drafted.has(draftId(r));
+        const allowed = can(role, 'send_coordination');
+        return (
+          <Button size="sm" disabled={!allowed || done} title={allowed ? undefined : t('hs.draftNoPerm')} onClick={() => draft(r)}>
+            {t(done ? 'hs.drafted' : 'hs.draft')}
+          </Button>
+        );
+      },
+    },
   ];
+
+  // one draft per segment, window and day; a person sends it from Comms (L3 mechanism)
+  const draftId = (r: Row) => `${r.key}|${win}|${dow}`;
+  const draft = (r: Row) => {
+    useComms.getState().draftCoordination({
+      ...draftFor(r.action),
+      channel: 'PTCC analytics',
+      operator: role,
+      content: t('hs.draftMsg', { segment: r.name, window: t(`hs.win.${win}` as I18nKey), day: t(`dow.${dow}` as I18nKey), action: t(r.action) }),
+    });
+    setDrafted((d) => new Set(d).add(draftId(r)));
+    overlay.toast(t('hs.draftDone'), { tone: 'ok' });
+  };
 
   const showOnMap = () => {
     useSelection.getState().setSegments(top.map((h) => h.key));

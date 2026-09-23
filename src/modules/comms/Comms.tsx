@@ -542,6 +542,11 @@ function CoordinationLog() {
                 <Row label={t('ev.actor')} value={m.operator} />
               </dl>
               <p className="t-body mt-1 min-w-0 break-words text-[var(--color-text2)]">{m.content}</p>
+              {m.acknowledged_at ? (
+                <p className="t-body mt-1 rounded border border-[var(--color-sev-ok)] px-2 py-1 text-[var(--color-sev-ok)]" data-ack="">
+                  ↩ {clockOf(m.acknowledged_at)} · {m.ack_text}
+                </p>
+              ) : null}
             </li>
           ))}
           {msgs.length > shown.length ? (

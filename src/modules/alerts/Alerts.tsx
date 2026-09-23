@@ -22,6 +22,9 @@ import { useForecast } from '../../store/forecast';
 import { HORIZONS, type Horizon } from '../../rules/forecast';
 import { can } from '../roles/roles';
 import { drillHref, LevelBadge } from './sop';
+import { HorizonMatrix, openHowItWorks, ScorecardPanel, WatchList } from './ForecastParts';
+import { cancelL1, useSop } from '../../store/sop';
+import type { ForecastAlert } from '../../rules/forecast';
 import type {
   ActionItem,
   Alert,
@@ -319,6 +322,7 @@ function AlertsTab() {
 function ForecastTab() {
   const t = useT();
   const [h, setH] = useState<Horizon>(15);
+  const [view, setView] = useState<'list' | 'matrix'>('list');
   const rows = useForecast((s) => s.byHorizon[h]);
   const now_s = useSim((s) => s.snap?.sim_time_s ?? 0);
   const pMin = useSettings((s) => s.th.forecast_min_probability_pct);
@@ -345,6 +349,14 @@ function ForecastTab() {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          data-matrix-toggle=""
+          className={BTN}
+          onClick={() => setView((v) => (v === 'list' ? 'matrix' : 'list'))}
+        >
+          {view === 'list' ? t('fc.view.matrix') : t('fc.view.list')}
+        </button>
         <span className="num text-[11px] text-[var(--color-text2)]">{t('alerts.count', { n: num(rows.length) })}</span>
         <span className="text-[10px] text-[var(--color-text3)]">{t('fc.minChance', { p: pMin, dow: t(`dow.${dow}` as I18nKey) })}</span>
         <span className="ml-auto flex items-center gap-2">
@@ -353,8 +365,13 @@ function ForecastTab() {
         </span>
       </div>
       <Panel titleKey="fc.title.panel" className="min-h-0 flex-1">
-        {groups.length === 0 ? (
-          <Empty tone="ok" title={t('fc.none', { h })} text={t('fc.noneHint')} />
+        {view === 'matrix' ? (
+          <HorizonMatrix />
+        ) : groups.length === 0 ? (
+          <>
+            <Empty tone="ok" title={t('fc.none', { h })} text={t('fc.noneHint')} />
+            <WatchList h={h} />
+          </>
         ) : (
           <ul data-worklist="" data-forecast-list="">
             {groups.slice(0, MAX_WORKLIST_GROUPS).map((g) => (
@@ -363,6 +380,7 @@ function ForecastTab() {
           </ul>
         )}
       </Panel>
+      <ScorecardPanel />
     </div>
   );
 }
@@ -451,6 +469,32 @@ function eventTypeFor(a: Alert): string {
 function headlineAction(a: Alert): { pb: PlaybookId; key: I18nKey } {
   const pb = playbookFor(eventTypeFor(a), a.level);
   return { pb, key: PLAYBOOKS[pb].recommended[0] as I18nKey };
+}
+
+/** E2: the L1 notification is about to go - show when, and let a controller stop it. */
+function Countdown({ alertId, now_s }: { alertId: string; now_s: number }) {
+  const t = useT();
+  const role = useSettings((s) => s.role);
+  const due = useSop((s) => s.pending[alertId]);
+  if (due === undefined) return null;
+  return (
+    <>
+      <StatusPill tone="warn">
+        <span data-countdown="">{t('sop.sendingIn', { s: Math.max(0, Math.round(due - now_s)) })}</span>
+      </StatusPill>
+      <button
+        type="button"
+        data-cancel-l1=""
+        className={BTN}
+        disabled={!can(role, 'revoke_auto_action')}
+        onClick={() => {
+          if (cancelL1(alertId, role)) overlay.toast(t('sop.cancelled'));
+        }}
+      >
+        {t('sop.cancel')}
+      </button>
+    </>
+  );
 }
 
 /** L1: what the system already did, and the controller's way to undo it. */
@@ -557,8 +601,12 @@ function AlertRow({ r, now_s, count, inTail }: { r: Ranked; now_s: number; count
             {num(a.impact_score)}
           </span>
           {a.forecast ? (
-            <span className="font-semibold text-[var(--color-forecast)]" data-forecast-prob="">
-              {t('fc.probConf', { p: Math.round((a.probability ?? 0) * 100), c: (a.confidence ?? 0).toFixed(2), h: a.horizon_min ?? 0 })}
+            <span
+              className="font-semibold text-[var(--color-forecast)]"
+              data-forecast-prob=""
+              title={t('fc.confTip', { c: (a.confidence ?? 0).toFixed(2) })}
+            >
+              {t('fc.chance', { p: Math.round((a.probability ?? 0) * 100), h: a.horizon_min ?? 0 })}
             </span>
           ) : (
             <span className="break-words">{ruleLine(a, t)}</span>
@@ -574,7 +622,12 @@ function AlertRow({ r, now_s, count, inTail }: { r: Ranked; now_s: number; count
       <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
         {a.forecast ? (
           // A forecast is not an alert (L1235): nothing to validate, acknowledge or send.
-          <StatusPill tone="neutral">{t('fc.tag')}</StatusPill>
+          <>
+            <StatusPill tone="neutral">{t('fc.tag')}</StatusPill>
+            <button type="button" className={BTN} data-how="" onClick={() => openHowItWorks(a as ForecastAlert, t('fc.how.title'))}>
+              {t('fc.how.button')}
+            </button>
+          </>
         ) : a.validated_event_id ? (
           <>
             <StatusPill tone="info">{t('alerts.validated', { id: a.validated_event_id })}</StatusPill>
@@ -593,6 +646,7 @@ function AlertRow({ r, now_s, count, inTail }: { r: Ranked; now_s: number; count
                 offer Revoke. L3: escalate (validate pre-filled with the L3 playbook) and
                 the Traffic-department draft waiting in Comms. */}
             {a.level === 1 && a.auto_comm_id ? <AutoSent commId={a.auto_comm_id} /> : null}
+            {a.level === 1 && !a.auto_comm_id ? <Countdown alertId={a.id} now_s={now_s} /> : null}
             {a.level === 1 && !a.auto_comm_id && !autoOn ? <StatusPill tone="neutral">{t('sop.autoOff')}</StatusPill> : null}
             {a.level === 3 ? (
               <>

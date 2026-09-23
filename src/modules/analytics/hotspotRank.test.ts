@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRoutes } from '../../data/build';
 import { segmentCentrality } from '../../data/segments';
 import { buildBaseline } from '../../sim/baseline';
-import { hotspotAction, LIVE_OVER_NORM_S_PER_KM, rankHotspots } from './hotspotRank';
+import { draftFor, hotspotAction, LIVE_OVER_NORM_S_PER_KM, rankHotspots } from './hotspotRank';
 
 const SEED = 20260921;
 const routes = buildRoutes(SEED).filter((r) => r.active);
@@ -32,5 +32,14 @@ describe('top-5 delay hotspots (3b)', () => {
     const central = base.segKeys.find((k) => segmentCentrality(k) === 2)!;
     expect(hotspotAction(central, 'am', LIVE_OVER_NORM_S_PER_KM - 1)).toBe('hs.act.signal_priority');
     expect(hotspotAction(central, 'midday', null)).toBe('hs.act.stop_spacing');
+  });
+});
+
+describe('hotspot action -> coordination draft (E14)', () => {
+  it('signal, bus-lane and notify go to TCC; timetable and stop work go to the operator', () => {
+    for (const a of ['hs.act.tcc_notify', 'hs.act.signal_priority', 'hs.act.bus_lane'] as const)
+      expect(draftFor(a)).toEqual({ recipient: 'tcc', message_type: 'coordination_request' });
+    for (const a of ['hs.act.schedule_pad', 'hs.act.stop_spacing'] as const)
+      expect(draftFor(a)).toEqual({ recipient: 'bus_operator', message_type: 'operational_instruction' });
   });
 });

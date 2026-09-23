@@ -155,13 +155,27 @@ test('analytics: route profile chart, top-5 hotspots, show on map', async ({ pag
   await page.goto('/?role=operations_controller#/analytics');
   await page.getByRole('tab', { name: /Route profile/i }).click();
   await expect(page.locator('[data-route-profile-chart] canvas').first()).toBeVisible({ timeout: 30_000 });
+  // E13: day heatmap draws; clicking a cell opens that start time back in the trip chart
+  await page.getByRole('button', { name: /Day heatmap/i }).click();
+  const heat = page.locator('[data-route-profile-heatmap] canvas').first();
+  await expect(heat).toBeVisible();
+  await heat.click({ position: { x: 200, y: 200 } });
+  await expect(page.locator('[data-route-profile-chart] canvas').first()).toBeVisible();
 
   await page.getByRole('tab', { name: /Delay hotspots/i }).click();
   await expect(page.locator('[data-hotspots-table] tbody tr')).toHaveCount(5, { timeout: 30_000 });
 
+  // E14: a proposed action becomes an audited draft a person sends from Comms
+  const row1 = page.locator('[data-hotspots-table] tbody tr').first();
+  await row1.getByRole('button', { name: 'Draft', exact: true }).click();
+  await expect(row1.getByRole('button', { name: 'Drafted', exact: true })).toBeVisible();
+
   await page.getByRole('button', { name: /Show on map/i }).click();
   await expect(page).toHaveURL(/#\/map$/);
   await expect(page.getByRole('button', { name: /Clear hotspots \(5\)/i })).toBeVisible();
+
+  await page.goto('/?role=operations_controller#/comms');
+  await expect(page.locator('[data-coord="draft"]').first()).toBeVisible({ timeout: 30_000 });
 
   expect(errors, `page errors:\n${errors.join('\n')}`).toEqual([]);
 });

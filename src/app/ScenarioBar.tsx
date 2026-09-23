@@ -74,7 +74,7 @@ function usePresenterHelp() {
 
 export function ScenarioBar() {
   const t = useT();
-  const { active, step, next, stop } = useRunner();
+  const { active, step, next, stop, autoplay, pauseAuto } = useRunner();
   const mode = useSettings((s) => s.mode);
   const sc = active ? SCENARIOS[active] : null;
   usePresenterHelp();
@@ -96,6 +96,11 @@ export function ScenarioBar() {
           <span className="t-meta max-w-[40%] truncate" title={sc.source}>
             {t('sb.source', { src: sc.source })}
           </span>
+          {autoplay ? (
+            <button type="button" data-autoplay="" onClick={pauseAuto} className="rounded border border-[var(--color-accent)] px-2 py-0.5 text-[var(--color-accent)]">
+              ⏸ {t('sc.autoplay')}
+            </button>
+          ) : null}
           {step < sc.steps.length - 1 && (
             <button type="button" onClick={next} className="rounded border border-[var(--color-line)] px-2 py-0.5 hover:border-[var(--color-accent)]">
               {t('sb.next')}

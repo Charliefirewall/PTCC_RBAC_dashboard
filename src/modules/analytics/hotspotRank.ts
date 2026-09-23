@@ -95,3 +95,15 @@ export function hotspotAction(key: string, win: HotspotWindow, liveOverNorm: num
   if (c === 1) return 'hs.act.bus_lane';
   return 'hs.act.schedule_pad';
 }
+
+const TO_TCC = new Set<I18nKey>(['hs.act.tcc_notify', 'hs.act.signal_priority', 'hs.act.bus_lane']);
+
+/** E14: who a proposed action is drafted to. Signals and lanes are TCC's; timetable and stops are the operator's. */
+export function draftFor(action: I18nKey): {
+  recipient: 'tcc' | 'bus_operator';
+  message_type: 'coordination_request' | 'operational_instruction';
+} {
+  return TO_TCC.has(action)
+    ? { recipient: 'tcc', message_type: 'coordination_request' }
+    : { recipient: 'bus_operator', message_type: 'operational_instruction' };
+}

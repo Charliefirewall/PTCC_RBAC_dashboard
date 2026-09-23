@@ -63,3 +63,67 @@ test('forecast tab lists possible alerts with chance and confidence, in the fore
   await expect(page.locator('[data-trip-tab]')).toBeVisible();
   await expect(page.locator('[data-stop-row][data-forecast]').first()).toBeVisible({ timeout: 20_000 });
 });
+
+test('enhancements: L1 countdown can be cancelled, TCC acknowledges, trip shows the SOP timeline', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto('/?role=operations_controller#/alerts');
+  await expect(page.locator('[data-alert-row]').first()).toBeVisible({ timeout: 30_000 });
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+
+  // E2: the L1 notification waits a visible countdown; pause the sim and cancel it
+  await page.keyboard.press('p');
+  await expect(page.locator('[data-countdown]').first()).toBeVisible({ timeout: 30_000 });
+  await page.evaluate(() => (window as any).__ptcc.engine.pause());
+  await page.locator('[data-cancel-l1]').first().click();
+  await expect(page.locator('[data-countdown]')).toHaveCount(0);
+  await expect(page.locator('[data-auto-sent]')).toHaveCount(0);
+  await page.evaluate(() => (window as any).__ptcc.engine.start());
+
+  // E1 + E3: step to L3, send the Traffic draft, and TCC (simulated) acknowledges
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('n');
+  await page.keyboard.press('n');
+  await expect(page.locator('[data-sop-level="3"]').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('[data-alert-row]', { hasText: /routes delayed.*–/ }).first()).toBeVisible();
+  await page.evaluate(() => { location.hash = '#/comms'; });
+  await page.locator('[data-send-draft]').first().click();
+  await expect(page.locator('[data-ack]').first()).toBeVisible({ timeout: 30_000 });
+
+  // E4 + E17: drill from a delay alert, see what was done and a masked driver name
+  await page.evaluate(() => { location.hash = '#/alerts'; });
+  await page.locator('[data-alert-row]:has([data-sop-level]) [data-drill][href*="#/vehicle/"]').first().click();
+  await expect(page.locator('[data-sop-timeline]')).toBeVisible();
+  await expect(page.locator('[data-driver-name]')).toContainText('*');
+  await expect(page.locator('[data-load-profile]')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('enhancements: forecast explains itself, has a scorecard, watch list, matrix and a Next-hour panel', async ({ page }) => {
+  await page.goto('/?role=operations_controller#/command');
+  // E10 on the first screen the audience sees
+  await expect(page.locator('[data-next-hour]')).toBeVisible({ timeout: 30_000 });
+
+  await page.evaluate(() => { location.hash = '#/alerts'; });
+  await page.locator('[data-tab="forecast"]').click();
+  // E8: a quiet network still shows the watch list; E7 scorecard is always there
+  await expect(page.locator('[data-watch-row]').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('[data-scorecard]')).toBeVisible();
+
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('p');
+  await page.keyboard.press('n');
+  await page.keyboard.press('n');
+  const row = page.locator('[data-forecast-list] [data-alert-row][data-forecast]').first();
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await expect(row.locator('[data-forecast-prob]')).toContainText(/\d+% chance/);
+
+  // E6
+  await row.locator('[data-how]').click();
+  await expect(page.locator('[data-how-it-works]')).toContainText(/expected/);
+  await page.keyboard.press('Escape');
+
+  // E9
+  await page.locator('[data-matrix-toggle]').click();
+  await expect(page.locator('[data-horizon-matrix] tbody tr').first()).toBeVisible();
+});

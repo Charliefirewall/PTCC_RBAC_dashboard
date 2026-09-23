@@ -14,7 +14,8 @@
  * forecast for that start is the norm itself, and the screen says so.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { getInstanceByDom } from 'echarts/core';
 import { useSettings, useSim, world } from '../../store';
 import { baselineOf, bucketOf, bucketStartS, BUCKET_MIN, BUCKETS, SIM_DOW } from '../../sim/baseline';
 import { hhmm } from '../../sim/engine';
@@ -22,8 +23,9 @@ import { tripIdOf } from '../../sim/types';
 import { forecastStops } from '../../rules/forecast';
 import { segmentName } from '../../data/segments';
 import { EChart, AXIS, CHART_BASE } from '../../charts/EChart';
-import { DataTable, Panel, type Column } from '../../components/primitives';
+import { Button, DataTable, Panel, type Column } from '../../components/primitives';
 import { Select } from '../../components/kit';
+import { dayMatrix } from './dayMatrix';
 import { useLang, useT } from '../../i18n/t';
 import type { I18nKey } from '../../i18n/dict';
 
@@ -64,6 +66,9 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
   );
   const [dir, setDir] = useState<0 | 1>(0);
   const [bucket, setBucket] = useState(() => bucketOf(world.sim_time_s));
+  const [cmp, setCmp] = useState<number | null>(null); // E12 "compare with" day
+  const [mode, setMode] = useState<'trip' | 'heat'>('trip'); // E13
+  const heatRef = useRef<HTMLDivElement>(null);
   const route = world.routeById.get(routeId)!;
   const base = baselineOf(world);
 
@@ -109,11 +114,12 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
     const T3 = cssVar('--color-text3', '#8794a6');
     const T2 = cssVar('--color-text2', '#9caabb');
     const A = cssVar('--color-accent', '#4d8df0');
+    const tag = cmp === null ? '' : ` · ${t(`dow.${dow}` as I18nKey)}`;
     const series: Record<string, unknown>[] = [
       // band = invisible p10 line + stacked (p90 - p10) area; 'all' so negative p10 still stacks
       { name: 'p10', type: 'line', stack: 'band', stackStrategy: 'all', symbol: 'none', lineStyle: { opacity: 0 }, data: norm.map((n) => min(n.p10)), tooltip: { show: false } },
       {
-        name: t('rp.band'),
+        name: t('rp.band') + tag,
         type: 'line',
         stack: 'band',
         stackStrategy: 'all',
@@ -124,7 +130,7 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
         data: norm.map((n) => min(n.p90 - n.p10)),
         tooltip: { show: false },
       },
-      { name: t('rp.normMean'), type: 'line', symbol: 'none', lineStyle: { color: T2, width: 1.5 }, itemStyle: { color: T2 }, data: norm.map((n) => min(n.mean)) },
+      { name: t('rp.normMean') + tag, type: 'line', symbol: 'none', lineStyle: { color: T2, width: 1.5 }, itemStyle: { color: T2 }, data: norm.map((n) => min(n.mean)) },
       {
         name: t('rp.segExcess'),
         type: 'bar',
@@ -134,6 +140,27 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
         data: bars,
       },
     ];
+    if (cmp !== null) {
+      // E12: the second day's norm, muted (dotted line, faint band) so the primary day leads
+      const cn = base.profile(route, dir, cmp, bucket);
+      const ctag = ` · ${t(`dow.${cmp}` as I18nKey)}`;
+      series.push(
+        { name: 'p10c', type: 'line', stack: 'cmp', stackStrategy: 'all', symbol: 'none', lineStyle: { opacity: 0 }, data: cn.map((n) => min(n.p10)), tooltip: { show: false } },
+        {
+          name: t('rp.band') + ctag,
+          type: 'line',
+          stack: 'cmp',
+          stackStrategy: 'all',
+          symbol: 'none',
+          lineStyle: { opacity: 0 },
+          areaStyle: { color: T3 + '14' },
+          itemStyle: { color: T3 + '66' },
+          data: cn.map((n) => min(n.p90 - n.p10)),
+          tooltip: { show: false },
+        },
+        { name: t('rp.normMean') + ctag, type: 'line', symbol: 'none', lineStyle: { color: T3, width: 1.5, type: 'dotted' }, itemStyle: { color: T3 }, data: cn.map((n) => min(n.mean)) },
+      );
+    }
     if (bus && fc) {
       const k0 = fc.k0;
       series.push({
@@ -168,7 +195,7 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
     return {
       ...CHART_BASE,
       grid: { ...CHART_BASE.grid, left: 44, right: 44, top: 30, bottom: 70 },
-      legend: { top: 0, itemWidth: 14, itemHeight: 6, textStyle: { fontSize: 10 }, data: series.map((s) => s.name as string).filter((n) => n !== 'p10') },
+      legend: { top: 0, itemWidth: 14, itemHeight: 6, textStyle: { fontSize: 10 }, data: series.map((s) => s.name as string).filter((n) => n !== 'p10' && n !== 'p10c') },
       xAxis: { type: 'category', data: rows.map((r) => r.stop), ...AXIS, axisLabel: { ...AXIS.axisLabel, rotate: 40, fontSize: 9, hideOverlap: true } },
       yAxis: [
         { type: 'value', name: 'min', ...AXIS },
@@ -176,7 +203,57 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
       ],
       series,
     };
-  }, [view, t, theme]);
+  }, [view, t, theme, cmp, base, route, dir, bucket, dow]);
+
+  // E13: whole day at a glance - rows = start buckets, cols = stops, value = norm mean (min)
+  const heatOption = useMemo(() => {
+    if (mode !== 'heat') return null;
+    const m = dayMatrix(base, route, dir, dow);
+    const flat = m.flat();
+    const times = Array.from({ length: BUCKETS }, (_, b) => hhmm(bucketStartS(b)));
+    const stops = view.rows.map((r) => r.stop);
+    return {
+      ...CHART_BASE,
+      tooltip: {
+        ...CHART_BASE.tooltip,
+        trigger: 'item',
+        formatter: (p: { value: [number, number, number] }) => `${times[p.value[1]]} · ${stops[p.value[0]]}: ${p.value[2].toFixed(1)} min`,
+      },
+      grid: { ...CHART_BASE.grid, left: 44, right: 12, top: 8, bottom: 110 },
+      xAxis: { type: 'category', data: stops, ...AXIS, axisLabel: { ...AXIS.axisLabel, rotate: 40, fontSize: 9, hideOverlap: true } },
+      yAxis: { type: 'category', data: times, inverse: true, ...AXIS, axisLabel: { ...AXIS.axisLabel, interval: 3 } },
+      visualMap: {
+        min: Math.min(...flat),
+        max: Math.max(...flat),
+        precision: 1,
+        orient: 'horizontal',
+        left: 'center',
+        bottom: 0,
+        itemHeight: 120,
+        textStyle: { color: cssVar('--color-text3', '#8794a6'), fontSize: 10 },
+        inRange: { color: [cssVar('--color-accent', '#4d8df0'), cssVar('--color-sev-warn', '#e0a02e'), cssVar('--color-sev-crit', '#ee5f63')] },
+      },
+      series: [{ type: 'heatmap', data: m.flatMap((row, b) => row.map((v, i) => [i, b, v])) }],
+    };
+  }, [mode, base, route, dir, dow, view.rows, theme]);
+
+  // EChart has no click prop; the instance lives on its own div, created in the child's
+  // mount effect, which runs before this one.
+  useEffect(() => {
+    const el = heatRef.current?.firstElementChild as HTMLElement | null;
+    const inst = el ? getInstanceByDom(el) : undefined;
+    if (!inst) return;
+    const onClick = (p: { value?: unknown }) => {
+      const v = p.value as [number, number, number] | undefined;
+      if (!v) return;
+      setBucket(v[1]);
+      setMode('trip');
+    };
+    inst.on('click', onClick);
+    return () => {
+      inst.off('click', onClick);
+    };
+  }, [mode]);
 
   const columns: Column<Row>[] = [
     { key: 'stop', label: t('rp.col.stop') },
@@ -229,13 +306,36 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
           onChange={(v) => setBucket(+v)}
           options={Array.from({ length: BUCKETS }, (_, b) => ({ value: String(b), label: hhmm(bucketStartS(b)) }))}
         />
+        <Select
+          label={t('rp.compare')}
+          value={cmp === null ? '' : String(cmp)}
+          onChange={(v) => setCmp(v === '' ? null : +v)}
+          options={[
+            { value: '', label: t('rp.compareNone') },
+            ...[0, 1, 2, 3, 4, 5, 6].map((d) => ({ value: String(d), label: t(`dow.${d}` as I18nKey) })),
+          ]}
+        />
+        <div className="flex gap-1" role="group">
+          <Button size="sm" variant={mode === 'trip' ? 'primary' : 'ghost'} onClick={() => setMode('trip')}>
+            {t('rp.view.trip')}
+          </Button>
+          <Button size="sm" variant={mode === 'heat' ? 'primary' : 'ghost'} onClick={() => setMode('heat')}>
+            {t('rp.view.heat')}
+          </Button>
+        </div>
       </div>
       <p className="t-meta" data-route-profile-note>
-        {note}
+        {mode === 'heat' ? t('rp.heat.hint', { dow: t(`dow.${dow}` as I18nKey) }) : note}
       </p>
-      <div style={{ height: 340 }} data-route-profile-chart>
-        <EChart option={option} />
-      </div>
+      {mode === 'heat' && heatOption ? (
+        <div key="heat" style={{ height: 520 }} data-route-profile-heatmap ref={heatRef}>
+          <EChart option={heatOption} />
+        </div>
+      ) : (
+        <div key="trip" style={{ height: 340 }} data-route-profile-chart>
+          <EChart option={option} />
+        </div>
+      )}
       <DataTable columns={columns} rows={view.rows} rowKey={(r) => String(r.k)} compact maxHeight={320} />
     </Panel>
   );

@@ -18,7 +18,7 @@
 import { useMemo, useState } from 'react';
 import { Empty, EvidenceTag, Panel, Sparkline } from '../../components/primitives';
 import { EChart, AXIS, CHART_BASE } from '../../charts/EChart';
-import { driverOf } from '../../data/drivers';
+import { driverOf, maskName } from '../../data/drivers';
 import { segmentName } from '../../data/segments';
 import type { I18nKey } from '../../i18n/dict';
 import { useT } from '../../i18n/t';
@@ -27,7 +27,8 @@ import { bandColor } from '../../rules/thresholds';
 import { baselineOf, bucketOf, bucketStartS } from '../../sim/baseline';
 import { hhmm } from '../../sim/engine';
 import { tripIdOf, type Route, type Vehicle } from '../../sim/types';
-import { useSelection, useSettings, useSim, world } from '../../store';
+import { useComms, useEvents, useSelection, useSettings, useSim, world } from '../../store';
+import { useSop } from '../../store/sop';
 
 const DASH = '—';
 const fmtDev = (s: number) => (Number.isFinite(s) ? `${s >= 0 ? '+' : '−'}${Math.abs(s / 60).toFixed(1)}` : DASH);
@@ -96,8 +97,15 @@ export function TripTab({ v, fromAlert }: { v: Vehicle; fromAlert?: string | nul
           <p className="num t-meta mt-1">
             {t('trip.speedStats', { avg: avg.toFixed(1), max: max.toFixed(0), n: tripSpeeds.length })}
           </p>
+          {/* E4: passenger load along the trip, from the same stop log */}
+          <p className="panel-title mt-2">{t('trip.load')}</p>
+          <div data-load-profile="">
+            <Sparkline values={log.length > 1 ? log.map((a) => (a.pax / Math.max(1, v.capacity)) * 100) : [0, 0]} width={240} height={32} color="var(--color-text2)" />
+          </div>
         </Panel>
       </div>
+
+      {fromAlert ? <SopTimeline alertId={fromAlert} /> : null}
 
       <Panel
         title={t('trip.chart')}
@@ -177,11 +185,13 @@ function DriverPanel({ v }: { v: Vehicle }) {
   const d = driverOf(v.driver_id, v.operator_id);
   return (
     <Panel title={t('trip.driver')} right={<EvidenceTag label="ASSUMPTION" cite="S5: id only" />} bodyClassName="p-3">
-      <p className="text-[13px] font-semibold text-[var(--color-text1)]">{lang === 'mn' ? d.name_mn : d.name_en}</p>
+      <p className="text-[13px] font-semibold text-[var(--color-text1)]" title={t('trip.maskNote')} data-driver-name="">
+        {maskName(lang === 'mn' ? d.name_mn : d.name_en)}
+      </p>
       <p className="num t-meta">
         {d.driver_id} · {t('trip.shift')} {d.shift} · {t('trip.radio')} {d.radio} · {t('trip.years')} {d.years}
       </p>
-      <p className="t-meta mt-1 italic">{t('trip.driverNote')}</p>
+      <p className="t-meta mt-1 italic">{t('trip.maskNote')} · {t('trip.driverNote')}</p>
     </Panel>
   );
 }
@@ -272,4 +282,36 @@ function TripChart({ rows, prev, hops }: { rows: Row[]; prev: { k: number; dev_s
     ],
   };
   return <EChart option={option} />;
+}
+
+/**
+ * E4 - "and then what?": everything recorded against this alert, oldest first - the L1
+ * countdown / auto-send / cancel / revoke, the L3 draft, the send, TCC's (simulated)
+ * reply, and validation into an event. Read from the audit log; nothing is inferred.
+ */
+function SopTimeline({ alertId }: { alertId: string }) {
+  const t = useT();
+  const audit = useEvents((s) => s.audit);
+  const comms = useComms((s) => s.coordination);
+  const pending = useSop((s) => s.pending[alertId]);
+  const mine = new Set(comms.filter((c) => c.alert_id === alertId).map((c) => c.communication_id));
+  const rows = audit
+    .filter((a) => a.target === alertId || mine.has(a.target) || (a.detail && mine.has(a.detail.split(' ')[0]!)))
+    .slice()
+    .reverse();
+  return (
+    <Panel title={t('trip.sopTimeline')} bodyClassName="p-2">
+      <ol className="num flex flex-col gap-0.5 text-[11px]" data-sop-timeline="">
+        {rows.map((a, i) => (
+          <li key={i}>
+            <span className="text-[var(--color-text3)]">{a.at.slice(11, 19)}</span> ·{' '}
+            {t(`audit.${a.action}` as I18nKey) === `audit.${a.action}` ? a.action : t(`audit.${a.action}` as I18nKey)} ·{' '}
+            <span className="text-[var(--color-text3)]">{a.actor}</span>
+          </li>
+        ))}
+        {pending !== undefined ? <li className="text-[var(--color-sev-warn)]">{t('sop.sendingIn', { s: Math.max(0, Math.round(pending - world.sim_time_s)) })}</li> : null}
+        {rows.length === 0 && pending === undefined ? <li className="t-meta">{t('trip.sopNone')}</li> : null}
+      </ol>
+    </Panel>
+  );
 }

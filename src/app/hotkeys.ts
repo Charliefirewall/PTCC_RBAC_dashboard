@@ -10,10 +10,21 @@ interface RunnerState {
   step: number;
   startedAt: number;
   showHelp: boolean;
-  start(id: ScenarioId): void;
+  /** E15: steps advance on their own every AUTOPLAY_MS, so the presenter can talk */
+  autoplay: boolean;
+  start(id: ScenarioId, autoplay?: boolean): void;
   next(): void;
   stop(): void;
+  pauseAuto(): void;
   toggleHelp(): void;
+}
+
+/** Real-time pause between auto-played steps (E15). */
+export const AUTOPLAY_MS = 45_000;
+let autoTimer: ReturnType<typeof setInterval> | null = null;
+function clearAuto() {
+  if (autoTimer) clearInterval(autoTimer);
+  autoTimer = null;
 }
 
 export const useRunner = create<RunnerState>((set, get) => ({
@@ -21,10 +32,24 @@ export const useRunner = create<RunnerState>((set, get) => ({
   step: -1,
   startedAt: 0,
   showHelp: false,
-  start(id) {
+  autoplay: false,
+  start(id, autoplay = false) {
+    clearAuto();
     resetAll(world);
-    set({ active: id, step: -1, startedAt: world.sim_time_s });
+    set({ active: id, step: -1, startedAt: world.sim_time_s, autoplay });
     get().next();
+    if (autoplay) {
+      autoTimer = setInterval(() => {
+        const { active, step } = get();
+        if (!active || step >= SCENARIOS[active].steps.length - 1) return get().pauseAuto();
+        get().next();
+        if (get().step >= SCENARIOS[active].steps.length - 1) get().pauseAuto();
+      }, AUTOPLAY_MS);
+    }
+  },
+  pauseAuto() {
+    clearAuto();
+    set({ autoplay: false });
   },
   next() {
     const { active, step } = get();
@@ -36,8 +61,9 @@ export const useRunner = create<RunnerState>((set, get) => ({
     set({ step: i });
   },
   stop() {
+    clearAuto();
     resetAll(world);
-    set({ active: null, step: -1 });
+    set({ active: null, step: -1, autoplay: false });
   },
   toggleHelp: () => set((s) => ({ showHelp: !s.showHelp })),
 }));
@@ -45,8 +71,8 @@ export const useRunner = create<RunnerState>((set, get) => ({
 const KEY_TO_SCENARIO: Record<string, ScenarioId> = {
   '1': 'D1', '2': 'D2', '3': 'D3', '4': 'D4', '5': 'D5',
   '6': 'D6', '7': 'D7', '8': 'D8', '9': 'D9',
-  // PTCC's own SOP scenario - P for PTCC
-  p: 'D10', P: 'D10',
+  // PTCC's own SOP scenario - P for PTCC (Shift+P auto-plays it, E15)
+  p: 'D10',
 };
 
 export function useHotkeys(): void {
@@ -68,6 +94,9 @@ export function useHotkeys(): void {
       if (useOverlayStore.getState().modal || useOverlayStore.getState().drawer) return;
 
       const r = useRunner.getState();
+      if (e.key === 'P') { r.start('D10', true); return; }
+      // any other presenter key takes the wheel back from auto-play
+      if (r.autoplay) r.pauseAuto();
       const sid = KEY_TO_SCENARIO[e.key];
       if (sid) { r.start(sid); return; }
 
@@ -109,6 +138,7 @@ export function useHotkeys(): void {
 export const HOTKEY_HELP: readonly [string, I18nKey][] = [
   ['1 – 9', 'hk.scenario'],
   ['P', 'hk.ptcc'],
+  ['Shift+P', 'hk.autoplay'],
   ['N', 'hk.next'],
   ['0', 'hk.reset'],
   ['W', 'hk.wall'],

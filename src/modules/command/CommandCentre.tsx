@@ -15,6 +15,8 @@
  * Every number on screen is read from the stores. Nothing is invented.
  */
 
+import { useForecast } from '../../store/forecast';
+import { HORIZONS } from '../../rules/forecast';
 import { drillHref, LevelBadge } from '../alerts/sop';
 import { useMemo } from 'react';
 import { MapCanvas } from '../map/LiveMap';
@@ -273,6 +275,36 @@ function openAlert(a: Alert): void {
     useSelection.getState().selectRoute(a.route_id);
     location.hash = '#/regularity';
   }
+}
+
+/**
+ * E10 - PTCC scenario 2 "can use the same dashboard": the next hour at a glance, in the
+ * forecast colour. Reads useForecast only; a click opens the Forecast tab.
+ */
+function NextHour() {
+  const t = useT();
+  const byH = useForecast((s) => s.byHorizon);
+  return (
+    <a
+      href="#/alerts"
+      data-next-hour=""
+      className="panel block shrink-0 border-l-4 border-l-[var(--color-forecast)] px-3 py-2 hover:bg-[var(--color-bg2)]"
+    >
+      <div className="panel-title mb-1 text-[var(--color-forecast)]">{t('cc.nextHour')}</div>
+      <div className="num flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+        {HORIZONS.map((h) => {
+          const rows = byH[h].filter((a) => a.route_id);
+          const top = rows.reduce((m, a) => Math.max(m, a.level), 0);
+          return (
+            <span key={h}>
+              <span className="text-[var(--color-text3)]">+{h === 60 ? '1h' : `${h}m`}: </span>
+              {rows.length ? t('cc.nextHourRow', { n: rows.length, level: top }) : t('cc.nextHourNone')}
+            </span>
+          );
+        })}
+      </div>
+    </a>
+  );
 }
 
 function PriorityAlerts({ alerts, wall, className = '' }: { alerts: Alert[]; wall: boolean; className?: string }) {
@@ -753,6 +785,7 @@ export default function CommandCentre() {
           <MapCanvas className="min-h-0 flex-1" />
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+          <NextHour />
           <PriorityAlerts alerts={alerts} wall={false} className="min-h-0 flex-[2]" />
           {/* Item 13: the agent feed is what makes the system read as agentic rather than
               as a rule engine (plan §10.2). Exported by AgentConsole so the same stream

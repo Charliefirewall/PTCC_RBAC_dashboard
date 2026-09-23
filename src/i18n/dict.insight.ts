@@ -54,6 +54,14 @@ export const insightDict = {
   'rp.col.actual': { en: 'Actual (min)', mn: 'Бодит (мин)' },
   'rp.col.delta': { en: 'Δ vs norm', mn: 'Нормоос зөрүү' },
   'rp.col.segment': { en: 'Segment', mn: 'Замын хэсэг' },
+  'rp.compare': { en: 'Compare with', mn: 'Харьцуулах өдөр' },
+  'rp.compareNone': { en: 'None', mn: 'Байхгүй' },
+  'rp.view.trip': { en: 'Trip chart', mn: 'Аяллын график' },
+  'rp.view.heat': { en: 'Day heatmap', mn: 'Өдрийн дулааны зураг' },
+  'rp.heat.hint': {
+    en: 'Norm deviation (min) at each stop, by trip start time, for {dow}. Click a cell to open that start in the trip chart.',
+    mn: '{dow} гарагийн аяллын эхлэх цаг бүрээр зогсоол бүрийн нормын хазайлт (мин). Нүдэн дээр дарж тухайн эхлэлийг аяллын графикт нээнэ.',
+  },
 
   // ---- hotspots (3b)
   'hs.title': { en: 'Top 5 road segments delaying buses', mn: 'Автобусыг хамгийн их саатуулдаг 5 замын хэсэг' },
@@ -81,6 +89,15 @@ export const insightDict = {
   },
   'hs.showMap': { en: 'Show on map', mn: 'Газрын зураг дээр харах' },
   'hs.clear': { en: 'Clear hotspots', mn: 'Саатлын цэгийг арилгах' },
+  'hs.col.draft': { en: 'Coordination', mn: 'Зохицуулалт' },
+  'hs.draft': { en: 'Draft', mn: 'Ноорог' },
+  'hs.drafted': { en: 'Drafted', mn: 'Ноорог бэлэн' },
+  'hs.draftDone': { en: 'Draft created — send from Comms', mn: 'Ноорог үүслээ — Харилцаа холбоо хэсгээс илгээнэ үү' },
+  'hs.draftNoPerm': { en: 'Your role cannot send coordination messages', mn: 'Таны үүрэг зохицуулалтын мессеж илгээх эрхгүй' },
+  'hs.draftMsg': {
+    en: 'Hotspot {segment} ({window}, {day}): {action}. Requested by PTCC analytics.',
+    mn: 'Саатлын цэг {segment} ({window}, {day}): {action}. PTCC-ийн шинжилгээнээс хүсэв.',
+  },
   'hs.act.tcc_notify': { en: 'Notify TCC now — live delay over 2× norm', mn: 'ЗХТ-д одоо мэдэгдэх — шууд саатал нормоос 2 дахин их' },
   'hs.act.signal_priority': {
     en: 'Request bus signal priority / TCC signal-timing review',
