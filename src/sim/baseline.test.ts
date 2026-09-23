@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRoutes, buildWorld } from '../data/build';
 import { deriveMetrics } from '../rules/evaluate';
 import { DEMO_DEFAULTS } from '../rules/thresholds';
-import { BUCKETS, bucketOf, buildBaseline } from './baseline';
+import { BUCKETS, bucketOf, buildBaseline, liveSegExcess } from './baseline';
 import { SimEngine } from './engine';
 
 const SEED = 20260921;
@@ -40,6 +40,24 @@ describe('synthetic Mon-Sun baseline', () => {
     const end = (dow: number, b: number) => base.profile(r, 0, dow, b).at(-1)!.mean;
     expect(end(0, b0800)).toBeGreaterThan(end(6, b0800));
     expect(end(0, b0800)).toBeGreaterThan(end(0, bucketOf(11 * 3600)));
+  });
+
+  it('live and norm share a scale: unperturbed, live segment delay sits near its norm', () => {
+    const w = buildWorld(SEED, 7 * 3600 + 40 * 60);
+    const e = new SimEngine(w);
+    for (let i = 0; i < 720; i++) e.tick();
+    const b = buildBaseline(SEED, w.routes);
+    const diffs: number[] = [];
+    for (const k of b.segKeys) {
+      const live = liveSegExcess(w, k);
+      if (live.n >= 5) diffs.push(live.mean - b.segExcess(k, 0, bucketOf(w.sim_time_s)).mean);
+    }
+    diffs.sort((x, y) => x - y);
+    expect(diffs.length).toBeGreaterThan(20);
+    // median segment within 8 s/km of its norm, and almost none tripping the 15 s/km
+    // "act now" margin with no scenario running
+    expect(Math.abs(diffs[Math.floor(diffs.length / 2)]!)).toBeLessThan(8);
+    expect(diffs.filter((d) => d > 15).length).toBeLessThanOrEqual(2);
   });
 
   it('the norm is the same order of magnitude as the live sim (calibration)', () => {

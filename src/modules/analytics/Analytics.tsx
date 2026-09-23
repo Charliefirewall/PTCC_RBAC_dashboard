@@ -9,13 +9,19 @@
  * say so (R1096 puts predictive functions outside PTCC scope).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { history, useAlerts, useComms, useEvents, useSelection, useSettings } from '../../store';
+import { useHashQuery } from '../../app/App';
 import { EChart, AXIS, CHART_BASE } from '../../charts/EChart';
 import { Button, Empty, EventSeverityBadge, EvidenceTag, Panel, StatusPill, fmtInt } from '../../components/primitives';
 import { useT } from '../../i18n/t';
 import type { I18nKey } from '../../i18n/dict';
 import type { EmergencyEvent } from '../../sim/types';
+
+// Long-term analytics (PTCC scenario 3) - an Extension outside R1096 scope, split out so
+// the review tab does not pay for them.
+const RouteProfile = lazy(() => import('./RouteProfile'));
+const Hotspots = lazy(() => import('./Hotspots'));
 
 type Row = { at: string; kind: 'alert' | 'stage' | 'action' | 'comm'; label: string; by?: string };
 
@@ -44,7 +50,76 @@ function cssVar(n: string, f: string): string {
   return typeof document === 'undefined' ? f : getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
 }
 
+type TabId = 'review' | 'route' | 'hotspots';
+const TABS: { id: TabId; key: I18nKey }[] = [
+  { id: 'review', key: 'an.tab.review' },
+  { id: 'route', key: 'an.tab.route' },
+  { id: 'hotspots', key: 'an.tab.hotspots' },
+];
+
+/**
+ * Tab shell. The tab lives in the hash (`#/analytics?tab=route&route=R7&dow=4`), so a
+ * tab is a deep link and the back button walks tabs; `dow` in the hash sets the
+ * baseline day like `?dow=` does.
+ */
 export default function Analytics() {
+  const t = useT();
+  const q = useHashQuery();
+  const setDow = useSettings((s) => s.setDow);
+  const dow = useSettings((s) => s.dow);
+  const raw = q.get('tab');
+  const tab: TabId = raw === 'route' || raw === 'hotspots' ? raw : 'review';
+  const qDow = q.get('dow');
+  useEffect(() => {
+    if (qDow !== null && Number.isFinite(+qDow)) setDow(+qDow);
+  }, [qDow, setDow]);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div role="tablist" className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--color-line)] px-2">
+        {TABS.map((tb) => (
+          <button
+            key={tb.id}
+            role="tab"
+            type="button"
+            aria-selected={tab === tb.id}
+            onClick={() => {
+              location.hash = tb.id === 'review' ? '#/analytics' : `#/analytics?tab=${tb.id}`;
+            }}
+            className={`t-body -mb-px border-b-2 px-3 py-1.5 font-medium ${
+              tab === tb.id
+                ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+                : 'border-transparent text-[var(--color-text3)] hover:text-[var(--color-text2)]'
+            }`}
+          >
+            {t(tb.key)}
+          </button>
+        ))}
+      </div>
+      {tab === 'review' ? (
+        <div className="min-h-0 flex-1 pt-2">
+          <ReviewTab />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto pt-2">
+          {/* Every number below is a synthetic norm or a forecast - said once, up front. */}
+          <div className="t-meta flex flex-wrap items-center gap-x-3 gap-y-1">
+            <EvidenceTag label="INFERRED" />
+            <span>{t('an.ext.scope')}</span>
+            <span>{t('an.ext.norm')}</span>
+            <span>{t('an.ext.day', { dow: t(`dow.${dow}` as I18nKey) })}</span>
+          </div>
+          <Suspense fallback={null}>
+            {tab === 'route' ? <RouteProfile key={q.get('route') ?? ''} initialRoute={q.get('route')} /> : <Hotspots />}
+          </Suspense>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Post-incident review - the original Analytics screen, unchanged. */
+function ReviewTab() {
   const t = useT();
   const events = useEvents((s) => s.events);
   const alerts = useAlerts((s) => s.alerts);

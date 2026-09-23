@@ -17,7 +17,11 @@
  */
 
 import { useMemo, useState, type ReactNode } from 'react';
-import { useAlerts, useEvents, useSelection, useSettings, useSim } from '../../store';
+import { useAlerts, useComms, useEvents, useSelection, useSettings, useSim } from '../../store';
+import { useForecast } from '../../store/forecast';
+import { HORIZONS, type Horizon } from '../../rules/forecast';
+import { can } from '../roles/roles';
+import { drillHref, LevelBadge } from './sop';
 import type {
   ActionItem,
   Alert,
@@ -132,7 +136,7 @@ const MAX_AUDIT_ROWS = 200;
 
 export default function Alerts() {
   const t = useT();
-  const [tab, setTab] = useState<'alerts' | 'events' | 'agents'>('alerts');
+  const [tab, setTab] = useState<'alerts' | 'forecast' | 'events' | 'agents'>('alerts');
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -150,6 +154,20 @@ export default function Alerts() {
         >
           <span className="inline-flex h-2.5 w-2.5 rounded-full bg-[var(--color-sev-warn)]" aria-hidden />
           {t('alerts.tabAlerts')}
+        </button>
+        {/* PTCC scenario 2: same table, forecast rows, different colour. */}
+        <button
+          type="button"
+          data-tab="forecast"
+          onClick={() => setTab('forecast')}
+          className={`flex items-center gap-2 rounded-t border-b-2 px-3 py-1.5 text-[12px] font-semibold ${
+            tab === 'forecast'
+              ? 'border-[var(--color-forecast)] text-[var(--color-text1)]'
+              : 'border-transparent text-[var(--color-text3)] hover:text-[var(--color-text2)]'
+          }`}
+        >
+          <span className="inline-flex h-2.5 w-2.5 rounded-full border-2 border-dashed border-[var(--color-forecast)]" aria-hidden />
+          {t('fc.tab')}
         </button>
         <button
           type="button"
@@ -188,7 +206,7 @@ export default function Alerts() {
         <span className="ml-auto text-[10px] text-[var(--color-text3)]">{t('alerts.scalesNote')}</span>
       </div>
 
-      {tab === 'alerts' ? <AlertsTab /> : tab === 'events' ? <EventsTab /> : <AgentsTab />}
+      {tab === 'alerts' ? <AlertsTab /> : tab === 'forecast' ? <ForecastTab /> : tab === 'events' ? <EventsTab /> : <AgentsTab />}
     </div>
   );
 }
@@ -288,6 +306,67 @@ function AlertsTab() {
   );
 }
 
+// ---------------------------------------------------------------- tab B: forecast
+
+/**
+ * PTCC scenario 2: "the table of alert can be the same except that it provides forecast
+ * of possible alert for 15 / 30 / 45 min and 1 hr, all given a confidence level".
+ *
+ * Same worklist and row as the live tab, fed from useForecast - never from useAlerts. A
+ * forecast row cannot be validated into an event or trigger an SOP action: it has a
+ * Drill button and nothing else.
+ */
+function ForecastTab() {
+  const t = useT();
+  const [h, setH] = useState<Horizon>(15);
+  const rows = useForecast((s) => s.byHorizon[h]);
+  const now_s = useSim((s) => s.snap?.sim_time_s ?? 0);
+  const pMin = useSettings((s) => s.th.forecast_min_probability_pct);
+  const dow = useSettings((s) => s.dow);
+  const groups = useMemo(() => buildWorklist(rows), [rows]);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2" data-forecast-tab="">
+      <div className="panel flex shrink-0 flex-wrap items-center gap-3 border-l-4 border-l-[var(--color-forecast)] px-3 py-2">
+        <span className="panel-title">{t('fc.horizon')}</span>
+        <div role="radiogroup" aria-label={t('fc.horizon')} className="flex overflow-hidden rounded border border-[var(--color-line)]">
+          {HORIZONS.map((x) => (
+            <button
+              key={x}
+              type="button"
+              role="radio"
+              aria-checked={h === x}
+              data-horizon={x}
+              onClick={() => setH(x)}
+              className={`num px-2.5 py-1 text-[11px] font-semibold ${
+                h === x ? 'bg-[var(--color-forecast)] text-[var(--color-on-accent)]' : 'text-[var(--color-text2)] hover:bg-[var(--color-bg2)]'
+              }`}
+            >
+              +{x === 60 ? '1h' : `${x}m`}
+            </button>
+          ))}
+        </div>
+        <span className="num text-[11px] text-[var(--color-text2)]">{t('alerts.count', { n: num(rows.length) })}</span>
+        <span className="text-[10px] text-[var(--color-text3)]">{t('fc.minChance', { p: pMin, dow: t(`dow.${dow}` as I18nKey) })}</span>
+        <span className="ml-auto flex items-center gap-2">
+          <EvidenceTag label="INFERRED" cite="R1096" />
+          <span className="text-[10px] text-[var(--color-text3)]">{t('fc.note')}</span>
+        </span>
+      </div>
+      <Panel titleKey="fc.title.panel" className="min-h-0 flex-1">
+        {groups.length === 0 ? (
+          <Empty tone="ok" title={t('fc.none', { h })} text={t('fc.noneHint')} />
+        ) : (
+          <ul data-worklist="" data-forecast-list="">
+            {groups.slice(0, MAX_WORKLIST_GROUPS).map((g) => (
+              <WorklistGroup key={g.key} g={g} now_s={now_s} />
+            ))}
+          </ul>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 // ------------------------------------------------------- ranking, grouping, playbook
 
 /**
@@ -310,6 +389,8 @@ interface Group {
   tail: Ranked[];
 }
 
+const foldKey = (a: Alert) => (a.level ? `${a.rule_id}:L${a.level}` : a.rule_id);
+
 function buildWorklist(rows: Alert[]): Group[] {
   const rank = new Map(rows.map((a, i) => [a.id, i + 1]));
   const byRule = new Map<string, Ranked[]>();
@@ -320,16 +401,18 @@ function buildWorklist(rows: Alert[]): Group[] {
       out.push({ key: a.id, head: r, tail: [] });
       continue;
     }
-    const members = byRule.get(a.rule_id);
+    // Fold per rule AND SOP level: an L2 delay must never hide inside an L1's tail.
+    const fold = foldKey(a);
+    const members = byRule.get(fold);
     if (members) {
       members.push(r);
       continue;
     }
-    byRule.set(a.rule_id, [r]);
-    out.push({ key: `g:${a.rule_id}`, head: r, tail: [] });
+    byRule.set(fold, [r]);
+    out.push({ key: `g:${fold}`, head: r, tail: [] });
   }
   for (const g of out) {
-    const members = byRule.get(g.head.a.rule_id);
+    const members = byRule.get(foldKey(g.head.a));
     if (members && members.length > 1 && g.key.startsWith('g:')) g.tail = members.slice(1);
   }
   return out;
@@ -368,6 +451,33 @@ function eventTypeFor(a: Alert): string {
 function headlineAction(a: Alert): { pb: PlaybookId; key: I18nKey } {
   const pb = playbookFor(eventTypeFor(a), a.level);
   return { pb, key: PLAYBOOKS[pb].recommended[0] as I18nKey };
+}
+
+/** L1: what the system already did, and the controller's way to undo it. */
+function AutoSent({ commId }: { commId: string }) {
+  const t = useT();
+  const role = useSettings((s) => s.role);
+  const msg = useComms((s) => s.coordination.find((c) => c.communication_id === commId));
+  if (!msg) return null;
+  if (msg.status === 'revoked') return <StatusPill tone="neutral">{t('sop.revoked')} · {commId}</StatusPill>;
+  return (
+    <>
+      <StatusPill tone="ok">
+        <span data-auto-sent="">{t('sop.autoSent')} · {commId}</span>
+      </StatusPill>
+      <button
+        type="button"
+        className={BTN}
+        disabled={!can(role, 'revoke_auto_action')}
+        title={t('sop.policy')}
+        onClick={() => {
+          if (useComms.getState().revoke(commId, role)) overlay.toast(t('sop.revoked'));
+        }}
+      >
+        {t('sop.revoke')}
+      </button>
+    </>
+  );
 }
 
 function RankChip({ n, hot }: { n: number; hot: boolean }) {
@@ -417,15 +527,20 @@ function AlertRow({ r, now_s, count, inTail }: { r: Ranked; now_s: number; count
   const subject = id(a.vehicle_id ?? a.route_id ?? a.operator_id);
   const age_min = num(Math.max(0, Math.round((now_s - a.raised_at_s) / 60)));
   const action = headlineAction(a);
+  const role = useSettings((s) => s.role);
+  const autoOn = useSettings((s) => s.l1_auto_exec);
+  const drill = drillHref(a);
 
   return (
     <li
       data-alert-row=""
+      data-forecast={a.forecast ? '' : undefined}
       className={`flex items-start gap-2.5 border-b border-[var(--color-line)] px-3 py-2 last:border-0 ${
         inTail ? 'bg-[var(--color-bg1)] pl-8' : ''
-      }`}
+      } ${a.forecast ? 'border-l-4 border-l-[var(--color-forecast)]' : ''}`}
     >
       <RankChip n={r.rank} hot={a.severity === 'critical'} />
+      {a.level ? <LevelBadge level={a.level} forecast={a.forecast} /> : null}
       <SeverityChip severity={a.severity} size="sm" />
       <div className="min-w-0 flex-1">
         {/* line 1 - identity */}
@@ -441,13 +556,26 @@ function AlertRow({ r, now_s, count, inTail }: { r: Ranked; now_s: number; count
             {t(('alerts.type.' + a.type) as I18nKey)} · {subject} · {t('alerts.age')} {age_min}m · {t('alerts.impact')}{' '}
             {num(a.impact_score)}
           </span>
-          <span className="break-words">{ruleLine(a, t)}</span>
+          {a.forecast ? (
+            <span className="font-semibold text-[var(--color-forecast)]" data-forecast-prob="">
+              {t('fc.probConf', { p: Math.round((a.probability ?? 0) * 100), c: (a.confidence ?? 0).toFixed(2), h: a.horizon_min ?? 0 })}
+            </span>
+          ) : (
+            <span className="break-words">{ruleLine(a, t)}</span>
+          )}
+          {a.routes_affected ? <span>{t('sop.routesAffected', { n: a.routes_affected })}</span> : null}
           {/* which agent owns this rule, and where its recommendation has got to */}
-          <AlertDecisionBadge alertId={a.id} />
+          {a.forecast ? null : <AlertDecisionBadge alertId={a.id} />}
         </div>
+        {a.level && !a.forecast ? (
+          <div className="mt-0.5 text-[10px] text-[var(--color-text3)]">{t(`sop.level.${a.level}` as I18nKey)}</div>
+        ) : null}
       </div>
       <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-        {a.validated_event_id ? (
+        {a.forecast ? (
+          // A forecast is not an alert (L1235): nothing to validate, acknowledge or send.
+          <StatusPill tone="neutral">{t('fc.tag')}</StatusPill>
+        ) : a.validated_event_id ? (
           <>
             <StatusPill tone="info">{t('alerts.validated', { id: a.validated_event_id })}</StatusPill>
             {/* item 24: no round trip - the event opens beside the list, not instead of it */}
@@ -461,9 +589,31 @@ function AlertRow({ r, now_s, count, inTail }: { r: Ranked; now_s: number; count
           </>
         ) : (
           <>
+            {/* PTCC SOP. L1: the notification already went, automatically - show it and
+                offer Revoke. L3: escalate (validate pre-filled with the L3 playbook) and
+                the Traffic-department draft waiting in Comms. */}
+            {a.level === 1 && a.auto_comm_id ? <AutoSent commId={a.auto_comm_id} /> : null}
+            {a.level === 1 && !a.auto_comm_id && !autoOn ? <StatusPill tone="neutral">{t('sop.autoOff')}</StatusPill> : null}
+            {a.level === 3 ? (
+              <>
+                <button
+                  type="button"
+                  data-sop-escalate=""
+                  className={`${BTN} border-[var(--color-sev-crit)] text-[var(--color-sev-crit)]`}
+                  disabled={!can(role, 'escalate_l3')}
+                  onClick={() => openValidate(t('sop.escalate'), a.id)}
+                >
+                  {t('sop.escalate')} ↑
+                </button>
+                <a className={BTN} href="#/comms" data-traffic-draft="">
+                  {t('sop.trafficDraft')} ↗
+                </a>
+              </>
+            ) : null}
             {/* The recommended action, as a button. It opens the validation flow, because
                 an alert is not an event until an operator validates it (L1235) and PTCC
-                is not a command authority (L718). Nothing here fires automatically. */}
+                is not a command authority (L718). Nothing else here fires automatically;
+                the one exception is the L1 notification above - a message, not control. */}
             <button
               type="button"
               data-alert-action=""
@@ -489,9 +639,9 @@ function AlertRow({ r, now_s, count, inTail }: { r: Ranked; now_s: number; count
             </button>
           </>
         )}
-        {a.vehicle_id ? (
-          <a className={BTN} href={`#/vehicle/${a.vehicle_id}`} title={t('alerts.openSubject')}>
-            {a.vehicle_id} ↗
+        {drill ? (
+          <a className={BTN} href={drill} title={t('alerts.openSubject')} data-drill="">
+            {a.vehicle_id ?? (a.params.bus ? `${a.params.bus}` : t('fc.drill'))} ↗
           </a>
         ) : null}
       </div>

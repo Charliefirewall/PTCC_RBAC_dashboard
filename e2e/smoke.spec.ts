@@ -143,3 +143,25 @@ test('every module route renders without throwing', async ({ page }) => {
   }
   expect(errors, `page errors:\n${errors.join('\n')}`).toEqual([]);
 });
+
+/**
+ * PTCC scenario 3 (long-term analytics): the route profile draws a chart, the hotspot
+ * table is exactly the top 5 PTCC asked for, and "Show on map" hands off to the map.
+ */
+test('analytics: route profile chart, top-5 hotspots, show on map', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+
+  await page.goto('/?role=operations_controller#/analytics');
+  await page.getByRole('tab', { name: /Route profile/i }).click();
+  await expect(page.locator('[data-route-profile-chart] canvas').first()).toBeVisible({ timeout: 30_000 });
+
+  await page.getByRole('tab', { name: /Delay hotspots/i }).click();
+  await expect(page.locator('[data-hotspots-table] tbody tr')).toHaveCount(5, { timeout: 30_000 });
+
+  await page.getByRole('button', { name: /Show on map/i }).click();
+  await expect(page).toHaveURL(/#\/map$/);
+  await expect(page.getByRole('button', { name: /Clear hotspots \(5\)/i })).toBeVisible();
+
+  expect(errors, `page errors:\n${errors.join('\n')}`).toEqual([]);
+});

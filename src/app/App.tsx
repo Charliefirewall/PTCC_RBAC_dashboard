@@ -31,14 +31,29 @@ export const MODULES = [
   { path: 'settings', key: 'nav.settings', evidence: 'INFERRED' },
 ] as const;
 
+/** Route path without its `?query` - `#/vehicle/3-015?alert=x` routes as `vehicle/3-015`. */
+const pathOf = () => location.hash.slice(2).split('?')[0] || 'command';
+
 export function useRoute(): [string, (p: string) => void] {
-  const [hash, setHash] = useState(() => location.hash.slice(2) || 'command');
+  const [hash, setHash] = useState(pathOf);
   useEffect(() => {
-    const on = () => setHash(location.hash.slice(2) || 'command');
+    const on = () => setHash(pathOf());
     addEventListener('hashchange', on);
     return () => removeEventListener('hashchange', on);
   }, []);
   return [hash, (p: string) => { location.hash = `#/${p}`; }];
+}
+
+/** The `?query` part of the hash route, e.g. `#/analytics?tab=route&route=R7`. Live. */
+export function useHashQuery(): URLSearchParams {
+  const read = () => new URLSearchParams(location.hash.split('?')[1] ?? '');
+  const [q, setQ] = useState(read);
+  useEffect(() => {
+    const on = () => setQ(read());
+    addEventListener('hashchange', on);
+    return () => removeEventListener('hashchange', on);
+  }, []);
+  return q;
 }
 
 export function App() {

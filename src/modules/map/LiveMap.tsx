@@ -43,6 +43,7 @@ import maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification, GeoJSONSource, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { UB_BBOX } from '../../data/corridors';
+import { segmentLine } from '../../data/segments';
 import type { Vehicle } from '../../sim/types';
 import { useAlerts, useSelection, useSettings, useSim, world } from '../../store';
 import { LOAD_BANDS, bandColor, bandOf } from '../../rules/thresholds';
@@ -286,6 +287,18 @@ const LAYER_LABEL: Record<keyof LayerFlags, I18nKey> = {
 };
 
 // ---------------------------------------------------------------- static geometry
+
+/** Hotspot segments picked in Analytics (PTCC 3b), as street polylines. */
+function hotspotsFC(): FC {
+  return {
+    type: 'FeatureCollection',
+    features: useSelection.getState().segment_keys.map((key) => ({
+      type: 'Feature',
+      properties: { key },
+      geometry: { type: 'LineString', coordinates: segmentLine(key) },
+    })),
+  };
+}
 
 type FC = GeoJSON.FeatureCollection<GeoJSON.Geometry, Record<string, unknown>>;
 
@@ -542,6 +555,24 @@ function MapGL({
           'line-gradient': trailGradientExpr(C),
         },
       });
+
+      // ---- 2c. delay hotspots (PTCC 3b, Analytics > Hotspots > "Show on map").
+      // Fed from useSelection.segment_keys; below the buses so it never hides one.
+      // Forecast colour: the ranking is read off the synthetic norm, not live data.
+      map.addSource('hotspots', { type: 'geojson', data: hotspotsFC() });
+      map.addLayer({
+        id: 'hotspots',
+        type: 'line',
+        source: 'hotspots',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': cssVar('--color-forecast', '#b48cf2'), 'line-width': 6 * rScale, 'line-opacity': 0.75 },
+      });
+      unsubs.push(
+        useSelection.subscribe((s, prev) => {
+          if (s.segment_keys !== prev.segment_keys)
+            (map.getSource('hotspots') as GeoJSONSource | undefined)?.setData(hotspotsFC());
+        }),
+      );
 
       // ---- 3. vehicles (per-frame setData)
       //
@@ -1187,6 +1218,7 @@ function MapGL({
       map.setPaintProperty('sel-route-ahead', 'line-color', N.accent);
       map.setPaintProperty('sel-deviation', 'line-color', N.warn);
       map.setPaintProperty('sel-trail', 'line-gradient', trailGradientExpr(N));
+      map.setPaintProperty('hotspots', 'line-color', cssVar('--color-forecast', '#b48cf2'));
       map.setPaintProperty('selection-halo', 'circle-stroke-color', N.accent);
       map.setPaintProperty('alert-glow', 'circle-color', sevColorExpr(N));
       map.setPaintProperty('alert-pins', 'circle-color', sevColorExpr(N));
@@ -1486,6 +1518,7 @@ function LayerPanel({
 }) {
   const t = useT();
   const [pinned, setPinned] = useState(false);
+  const hotspots = useSelection((s) => s.segment_keys.length);
   return (
     <div
       className="group absolute left-2 top-2 flex flex-col items-start gap-1"
@@ -1500,6 +1533,15 @@ function LayerPanel({
         <Chevron open={pinned} />
         {t('map.layers')}
       </button>
+      {hotspots > 0 && (
+        <button
+          type="button"
+          onClick={() => useSelection.getState().setSegments([])}
+          className="rounded border border-[var(--color-forecast)] bg-[color-mix(in_srgb,var(--color-bg1)_90%,transparent)] px-2 py-1 text-[10px] text-[var(--color-text2)] hover:text-[var(--color-text1)]"
+        >
+          {t('hs.clear')} ({hotspots})
+        </button>
+      )}
       <div
         className={`${
           pinned ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'

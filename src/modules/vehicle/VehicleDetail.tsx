@@ -35,13 +35,17 @@ import { bandOf } from '../../rules/thresholds';
 import { haversine } from '../../sim/geo';
 import type { Vehicle } from '../../sim/types';
 import { useAlerts, useEvents, useSettings, useSim, world } from '../../store';
+import { useHashQuery } from '../../app/App';
+import { TripTab } from './TripTab';
 
-type TabId = 'ops' | 'cctv' | 'incident';
+type TabId = 'trip' | 'ops' | 'cctv' | 'incident';
 
 /** Rows the incident tab will render before it stops and says how many it withheld. */
 const MAX_ALERT_ROWS = 25;
 
 const TABS: { id: TabId; key: I18nKey }[] = [
+  // PTCC drill-down: the trip - driver, position, speed, every stop vs schedule and norm
+  { id: 'trip', key: 'trip.tab' },
   { id: 'ops', key: 'veh.tabOps' },
   { id: 'cctv', key: 'veh.tabCctv' },
   { id: 'incident', key: 'veh.tabIncident' },
@@ -100,7 +104,9 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
   const snap = useSim((s) => s.snap);
   const alerts = useAlerts((s) => s.alerts);
   const events = useEvents((s) => s.events);
-  const [tab, setTab] = useState<TabId>('ops');
+  // Arriving from an alert (`?alert=`) opens the trip; otherwise the source-data tab as before.
+  const fromAlert = useHashQuery().get('alert');
+  const [tab, setTab] = useState<TabId>(fromAlert ? 'trip' : 'ops');
 
   const identity = world.vehicleById.get(vehicleId);
   // Live values come from the snapshot, never from the world object, so the card
@@ -255,6 +261,7 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
             ))}
           </div>
           <div className="min-h-0 flex-1 overflow-auto p-3">
+            {tab === 'trip' ? <TripTab v={v} fromAlert={fromAlert} /> : null}
             {tab === 'ops' ? <OpsTab v={v} /> : null}
             {tab === 'cctv' ? <CctvTab v={v} place={place} /> : null}
             {tab === 'incident' ? (

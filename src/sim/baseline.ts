@@ -93,9 +93,12 @@ export function buildBaseline(seed: number, routes: readonly Route[]): Baseline 
 
   keys.forEach((k, s) => {
     const c = segmentCentrality(k);
-    // s/km gained. Central streets lose time, outer feeders recover it (negative).
-    let base = c === 2 ? 6 + rng.next() * 4 : c === 1 ? 3 + rng.next() * 3 : -2 + rng.next() * 3;
-    if (hot.has(k)) base = Math.abs(base) * 2.4 + 4;
+    // s/km gained, on the SAME scale the engine logs live (world.segObs): calibrated
+    // against it so "live vs normal" compares like with like. Unperturbed, the engine's
+    // segments gain about -18..+6 s/km (outer feeders recover time, the centre loses it).
+    // Pinned by baseline.test.ts "live and norm share a scale".
+    let base = c === 2 ? 1 + rng.next() * 3 : c === 1 ? -2 + rng.next() * 3 : -9 + rng.next() * 6;
+    if (hot.has(k)) base = 5 + rng.next() * 4;
     for (let d = 0; d < 7; d++) {
       for (let b = 0; b < BUCKETS; b++) {
         const i = (s * 7 + d) * BUCKETS + b;

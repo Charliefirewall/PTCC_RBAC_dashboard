@@ -15,6 +15,7 @@
  * Every number on screen is read from the stores. Nothing is invented.
  */
 
+import { drillHref, LevelBadge } from '../alerts/sop';
 import { useMemo } from 'react';
 import { MapCanvas } from '../map/LiveMap';
 import { AgentActivityFeed } from '../agentic/AgentConsole';
@@ -258,6 +259,13 @@ function ruleLine(a: Alert, t: (k: I18nKey, p?: Record<string, string | number>)
 }
 
 function openAlert(a: Alert): void {
+  // Delay SOP alerts drill to their worst bus's trip (PTCC drill-down), same as Alerts.
+  const drill = drillHref(a);
+  if (drill && !a.vehicle_id && drill.startsWith('#/vehicle/')) {
+    useSelection.getState().selectVehicle(String(a.params.bus));
+    location.hash = drill;
+    return;
+  }
   if (a.vehicle_id) {
     useSelection.getState().selectVehicle(a.vehicle_id);
     location.hash = `#/vehicle/${a.vehicle_id}`;
@@ -310,6 +318,7 @@ function PriorityAlerts({ alerts, wall, className = '' }: { alerts: Alert[]; wal
                 disabled={wall}
                 className="flex w-full items-center gap-2 px-2 py-1.5 text-left enabled:hover:bg-[var(--color-bg2)]"
               >
+                {a.level ? <LevelBadge level={a.level} /> : null}
                 <SeverityChip severity={a.severity} size={wall ? 'wall' : 'sm'} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium" style={{ fontSize: wall ? '0.9em' : 13 }}>

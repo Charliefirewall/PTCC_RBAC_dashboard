@@ -92,6 +92,8 @@ export default function Settings() {
   const role = useSettings((s) => s.role);
   const showEvidence = useSettings((s) => s.showEvidence);
   const llmEnabled = useSettings((s) => s.llmEnabled);
+  const l1Auto = useSettings((s) => s.l1_auto_exec);
+  const dow = useSettings((s) => s.dow);
   const [speeds, setSpeeds] = useState<SpeedProfile>({ ...engine.speeds });
   const [simSpeed, setSimSpeed] = useState(engine.speed);
 
@@ -232,6 +234,30 @@ export default function Settings() {
               if ((v === 'on') !== showEvidence) useSettings.getState().toggleEvidence();
             }}
           />
+        </Row>
+        {/* PTCC SOP L1: the human gate on the one automatic action the demo takes. */}
+        <Row label={t('set.l1AutoExec')}>
+          <Choice
+            options={[
+              ['on', t('set.on')],
+              ['off', t('set.off')],
+            ]}
+            value={l1Auto ? 'on' : 'off'}
+            onPick={(v) => useSettings.getState().setL1AutoExec(v === 'on')}
+          />
+        </Row>
+        <Row label={t('set.dow')}>
+          <select
+            value={dow}
+            onChange={(e) => useSettings.getState().setDow(Number(e.target.value))}
+            className={`t-body px-2 py-1 ${FIELD}`}
+          >
+            {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+              <option key={d} value={d}>
+                {t(`dow.${d}` as I18nKey)}
+              </option>
+            ))}
+          </select>
         </Row>
         <Row label={t('set.role')}>
           <select

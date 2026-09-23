@@ -23,6 +23,7 @@ import { hhmmss, simSecondsOf } from '../../sim/engine';
 import type { I18nKey } from '../../i18n/dict';
 import { useT } from '../../i18n/t';
 import { Empty, EvidenceTag, Panel, StatusPill } from '../../components/primitives';
+import { can } from '../roles/roles';
 
 type PaxCategory = PassengerMessage['category'];
 type Channel = PassengerMessage['channels'][number];
@@ -480,13 +481,16 @@ function CoordinationComposer({ event, prefill }: { event: EmergencyEvent | unde
 function CoordinationLog() {
   const t = useT();
   const msgs = useComms((s) => s.coordination);
+  const role = useSettings((s) => s.role);
   const shown = msgs.slice(0, LOG_LIMIT);
+  // An SOP draft is waiting for a person to send it: open the log so it is seen.
+  const hasDraft = msgs.some((m) => m.status === 'draft');
   return (
     <Panel
       titleKey="comms.fields8"
       className="shrink-0"
       collapsible
-      defaultOpen={false}
+      defaultOpen={hasDraft}
       summary={msgs.length === 0 ? t('comms.empty') : String(msgs.length)}
     >
       {msgs.length === 0 ? (
@@ -494,14 +498,45 @@ function CoordinationLog() {
       ) : (
         <ul className="p-2">
           {shown.map((m) => (
-            <li key={m.communication_id} className="mb-2 rounded border border-[var(--color-line)] p-2">
-              <div className="flex min-w-0 items-center gap-2">
+            <li
+              key={m.communication_id}
+              data-coord={m.status ?? 'sent'}
+              className={`mb-2 rounded border p-2 ${m.status === 'draft' ? 'border-[var(--color-sev-crit)]' : 'border-[var(--color-line)]'}`}
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className="num t-meta min-w-0 truncate">{m.communication_id}</span>
                 <StatusPill tone="info">{t(`comms.type.${m.message_type}` as I18nKey)}</StatusPill>
+                {/* PTCC SOP: L1 messages the system sent itself; L3 drafts a person sends. */}
+                {m.auto ? <StatusPill tone={m.status === 'revoked' ? 'neutral' : 'ok'}>{t('sop.auto')}</StatusPill> : null}
+                {m.status === 'revoked' ? <StatusPill tone="neutral">{t('sop.revoked')}</StatusPill> : null}
+                {m.status === 'draft' ? (
+                  <>
+                    <StatusPill tone="crit">{t('sop.draft')}</StatusPill>
+                    <button
+                      type="button"
+                      data-send-draft=""
+                      disabled={!can(role, 'send_coordination')}
+                      onClick={() => useComms.getState().sendDraft(m.communication_id, role)}
+                      className="rounded border border-[var(--color-accent)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-accent)] disabled:opacity-40"
+                    >
+                      {t('sop.sendDraft')}
+                    </button>
+                  </>
+                ) : null}
+                {m.auto && m.status !== 'revoked' ? (
+                  <button
+                    type="button"
+                    disabled={!can(role, 'revoke_auto_action')}
+                    onClick={() => useComms.getState().revoke(m.communication_id, role)}
+                    className="rounded border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-text2)] disabled:opacity-40"
+                  >
+                    {t('sop.revoke')}
+                  </button>
+                ) : null}
                 <span className="num t-meta ml-auto shrink-0">{clockOf(m.sent_at)}</span>
               </div>
               <dl className="t-body mt-1 grid grid-cols-1 gap-x-3 sm:grid-cols-2">
-                <Row label={t('comms.linkedEvent')} value={m.event_id ?? t('comms.noEvent')} />
+                <Row label={t('comms.linkedEvent')} value={m.event_id ?? m.alert_id ?? t('comms.noEvent')} />
                 <Row label={t('comms.recipient')} value={t(`rcpt.${m.recipient}` as I18nKey)} />
                 <Row label={t('comms.channel')} value={m.channel} />
                 <Row label={t('ev.actor')} value={m.operator} />
