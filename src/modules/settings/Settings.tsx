@@ -15,6 +15,7 @@
  * trimmed - collapsing is.
  */
 
+import { useTx } from '../../i18n/t';
 import { engine, useSettings, type Preset } from '../../store';
 import { DEFAULT_SPEEDS, type SpeedProfile } from '../../sim/engine';
 import { DEMO_DEFAULTS, THRESHOLD_META, type Thresholds } from '../../rules/thresholds';
@@ -85,6 +86,7 @@ function commit(raw: string, max: number, write: (v: number) => void): void {
 
 export default function Settings() {
   const t = useT();
+  const tx = useTx();
   const th = useSettings((s) => s.th);
   const lang = useSettings((s) => s.lang);
   const preset = useSettings((s) => s.preset);
@@ -96,6 +98,7 @@ export default function Settings() {
   const dow = useSettings((s) => s.dow);
   const [speeds, setSpeeds] = useState<SpeedProfile>({ ...engine.speeds });
   const [simSpeed, setSimSpeed] = useState(engine.speed);
+  const [changes, setChanges] = useState<{ key: keyof Thresholds; from: number; to: number }[]>([]);
 
   const groups = TABLE_ORDER.map((table) => ({
     table,
@@ -106,6 +109,19 @@ export default function Settings() {
     const next = { ...speeds, [k]: v };
     setSpeeds(next);
     engine.speeds = next; // the engine reads this every tick; no React state holds vehicles
+  }
+
+  function setThreshold(k: keyof Thresholds, from: number, to: number) {
+    useSettings.getState().set(k, to as Thresholds[typeof k]);
+    setChanges((xs) => [...xs.slice(-19), { key: k, from, to }]);
+  }
+
+  function resetGroup(keys: (keyof Thresholds)[]) {
+    for (const k of keys) {
+      const current = useSettings.getState().th[k];
+      const target = DEMO_DEFAULTS[k];
+      if (typeof current === 'number' && typeof target === 'number' && current !== target) setThreshold(k, current, target);
+    }
   }
 
   return (
@@ -120,15 +136,16 @@ export default function Settings() {
 
         <div className="flex flex-col gap-2">
           {groups.map((g, i) => (
-            <Panel key={g.table} title={g.table} collapsible defaultOpen={i === 0} summary={g.keys.length} bodyClassName="p-3">
+            <Panel key={g.table} title={tx(g.table)} collapsible defaultOpen={i === 0} summary={g.keys.length} bodyClassName="p-3"
+              right={<Button size="sm" variant="ghost" onClick={() => resetGroup(g.keys)}>{t('support.set.resetGroup')}</Button>}>
               {g.keys.map((k) => (
-                <ThresholdField key={String(k)} k={k} value={th[k] as number} />
+                <ThresholdField key={String(k)} k={k} value={th[k] as number} onCommit={(v) => setThreshold(k, th[k] as number, v)} />
               ))}
               {/* the one non-numeric parameter: a list, shown read-only */}
               {g.table === THRESHOLD_META.video_trigger_events.table && (
                 <div className="t-body flex flex-wrap items-center justify-between gap-2 py-1">
                   <span className="text-[var(--color-text2)]">{t('th.video_trigger_events')}</span>
-                  <span className="num text-[var(--color-text3)]">{th.video_trigger_events.join(', ')}</span>
+                  <span className="num text-[var(--color-text3)]">{th.video_trigger_events.map(tx).join(', ')}</span>
                 </div>
               )}
             </Panel>
@@ -141,14 +158,14 @@ export default function Settings() {
         bodyClassName="p-3"
         collapsible
         defaultOpen={false}
-        summary={`centralPeak ${speeds.centralPeak}`}
+        summary={`${tx('centralPeak')} ${speeds.centralPeak}`}
       >
         <p className="t-meta mb-2">{t('set.speedNote')}</p>
         <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
           {SPEED_KEYS.map((k) => (
             <label key={k} className="t-body flex items-center justify-between gap-2 py-1">
-              <span className="min-w-0 truncate text-[var(--color-text2)]" title={k}>
-                {k}
+              <span className="min-w-0 truncate text-[var(--color-text2)]" title={tx(k)}>
+                {tx(k)}
                 {k === 'centralPeak' ? <EvidenceTag label="CONFIRMED" cite="CD + S5" className="ml-1" /> : null}
               </span>
               <input
@@ -259,6 +276,7 @@ export default function Settings() {
             ))}
           </select>
         </Row>
+        <p className="t-meta -mt-1 mb-1">{t('support.set.day')}</p>
         <Row label={t('set.role')}>
           <select
             value={role}
@@ -276,6 +294,19 @@ export default function Settings() {
           <StatusPill tone={llmEnabled ? 'warn' : 'ok'}>{llmEnabled ? t('set.on') : t('set.off')}</StatusPill>
         </Row>
         <p className="t-meta mt-1">{t('set.llmNote')}</p>
+      </Panel>
+
+      <Panel titleKey="support.set.log" bodyClassName="p-3" collapsible defaultOpen={false} summary={changes.length}>
+        {changes.length === 0 ? <p className="t-meta">{t('support.set.noChanges')}</p> : (
+          <ol className="flex max-h-48 flex-col gap-1 overflow-auto">
+            {[...changes].reverse().map((c, i) => (
+              <li key={`${String(c.key)}-${i}`} className="t-meta flex justify-between gap-3 border-b border-[var(--color-line-soft)] py-1">
+                <span>{t(THRESHOLD_META[c.key].labelKey as I18nKey)}</span>
+                <span className="num">{c.from} → {c.to} {tx(THRESHOLD_META[c.key].unit)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
       </Panel>
 
       <Panel
@@ -298,11 +329,11 @@ export default function Settings() {
   );
 }
 
-function ThresholdField({ k, value }: { k: keyof Thresholds; value: number }) {
+function ThresholdField({ k, value, onCommit }: { k: keyof Thresholds; value: number; onCommit: (v: number) => void }) {
   const t = useT();
+  const tx = useTx();
   const m = THRESHOLD_META[k];
   const label = t(m.labelKey as I18nKey);
-  const set = (v: number) => useSettings.getState().set(k, v as Thresholds[typeof k]);
   // A stored value that is somehow not finite must not become `value={NaN}` on a
   // controlled input - React would render an empty box with no way back. Fall back to
   // the field's own minimum; `set.reset()` restores the demo default either way.
@@ -321,13 +352,13 @@ function ThresholdField({ k, value }: { k: keyof Thresholds; value: number }) {
             max={m.max}
             step={m.step}
             value={safe}
-            onChange={(e) => commit(e.target.value, m.max, set)}
+            onChange={(e) => commit(e.target.value, m.max, onCommit)}
             // Two controls (number + range) drive the same value, so a <label> wrapper
             // could only name one of them. Both were unnamed before.
             aria-label={label}
             className={`num t-body w-20 px-1 py-0.5 text-right ${FIELD}`}
           />
-          <span className="t-meta w-8">{m.unit}</span>
+          <span className="t-meta w-8">{tx(m.unit)}</span>
         </span>
       </div>
       <input
@@ -336,7 +367,7 @@ function ThresholdField({ k, value }: { k: keyof Thresholds; value: number }) {
         max={m.max}
         step={m.step}
         value={safe}
-        onChange={(e) => commit(e.target.value, m.max, set)}
+        onChange={(e) => commit(e.target.value, m.max, onCommit)}
         aria-label={label}
         className="w-full"
         style={{ accentColor: 'var(--color-accent)' }}
@@ -344,6 +375,7 @@ function ThresholdField({ k, value }: { k: keyof Thresholds; value: number }) {
       <div className="flex items-center gap-2">
         <EvidenceTag label={m.table === 'PTCC input' ? 'CONFIRMED' : 'ASSUMPTION'} cite={m.table} />
         <span className="t-meta uppercase tracking-wider">{t('set.demoDefault')}</span>
+        <span className="t-meta ml-auto">{t('support.set.preview')}: <span className="num">{String(DEMO_DEFAULTS[k])} → {safe}</span></span>
       </div>
     </div>
   );

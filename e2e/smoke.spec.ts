@@ -10,9 +10,18 @@ import { expect, test } from '@playwright/test';
 
 test('the demo boots, simulates, alerts and switches to the wall', async ({ page }) => {
   const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
+  // Switching to wall mode intentionally unmounts MapLibre while its browser-owned
+  // raster requests are in flight. Chromium reports that cancellation as a page-level
+  // AbortError even though no application promise failed and the next screen renders.
+  page.on('pageerror', (e) => {
+    const message = String(e);
+    if (!/AbortError: The user aborted a request/i.test(message)) errors.push(message);
+  });
   page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(m.text());
+    // Chromium can surface the same MapLibre teardown cancellation through either
+    // `pageerror` or the console depending on request timing. It is browser-owned,
+    // contains no application stack, and is expected when W replaces the map canvas.
+    if (m.type() === 'error' && !/AbortError: The user aborted a request/i.test(m.text())) errors.push(m.text());
   });
 
   await page.goto('/?role=operations_controller#/command');
@@ -131,7 +140,7 @@ test('every module route renders without throwing', async ({ page }) => {
   // which is exactly how a route gets broken by a refactor and nobody notices until the
   // room. If MODULES grows, this list grows with it.
   const routes = [
-    'dashboard', 'command', 'map', 'regularity', 'passenger', 'alerts', 'comms',
+    'dashboard', 'command', 'map', 'regularity', 'passenger', 'alerts', 'forecast', 'comms',
     'health', 'operators', 'copilot', 'agentic', 'roi', 'analytics', 'multimodal',
     'provenance', 'depot', 'platform', 'settings',
   ];

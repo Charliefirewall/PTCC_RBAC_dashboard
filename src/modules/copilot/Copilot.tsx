@@ -72,6 +72,10 @@ export default function Copilot() {
 
       <AskBar page />
 
+      <Panel className="shrink-0" title={t('support.cop.format')} bodyClassName="px-3 py-2">
+        <p className="t-meta">{t('support.cop.formatBody')}</p>
+      </Panel>
+
       {/* Item 44: what this session asked, one click from asking it again. */}
       <History />
 

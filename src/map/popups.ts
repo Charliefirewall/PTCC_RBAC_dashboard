@@ -16,12 +16,13 @@
  */
 import maplibregl from 'maplibre-gl';
 import { useAlerts, useSelection, useSettings, world } from '../store';
+import { useForecast } from '../store/forecast';
 import { overlay } from '../store/overlay';
 import { LOAD_BANDS, bandOf } from '../rules/thresholds';
 import { devTier } from './risk';
 import { fmtInt, fmtMin } from '../components/primitives';
 import type { I18nKey } from '../i18n/dict';
-import type { Lang } from '../sim/types';
+import { tripIdOf, type Lang, type Route, type Vehicle } from '../sim/types';
 
 export interface PopupCtx {
   t: (key: I18nKey, params?: Record<string, string | number>) => string;
@@ -68,6 +69,13 @@ const setRow = (r: Row, value: string, color?: string) => {
  */
 export type LivePopup = maplibregl.Popup & { ptccTick?: () => void };
 
+export interface VehiclePopupOptions {
+  /** Hover cards do not select a vehicle and stay open while the pointer is over them. */
+  hover?: boolean;
+  onPointerEnter?: () => void;
+  onPointerLeave?: () => void;
+}
+
 function actions(
   specs: { label: string; run: () => void }[],
   onDone: () => void,
@@ -91,6 +99,21 @@ const routeName = (route_id: string, lang: Lang): string => {
   return `${route_id} · ${lang === 'mn' ? r.name_mn : r.name_en}`;
 };
 
+const stopName = (r: Route, idx: number, lang: Lang) => {
+  const s = r.stops[idx];
+  return s ? (lang === 'mn' ? s.name_mn : s.name_en) : '—';
+};
+
+/** Direction-aware termini. This uses the vehicle's real route/direction relationship;
+ * no location or assignment is invented for the hover card. */
+export function routeDirection(v: Vehicle, lang: Lang): string {
+  const r = world.routeById.get(v.route_id);
+  if (!r || r.stops.length === 0) return '—';
+  const first = v.direction === 0 ? 0 : r.stops.length - 1;
+  const last = v.direction === 0 ? r.stops.length - 1 : 0;
+  return `${stopName(r, first, lang)} → ${stopName(r, last, lang)}`;
+}
+
 /** Distance reads in metres up to a kilometre, then in km — a "1,240 m" next
  *  stop is harder to judge at a glance than "1.2 km". */
 /** The three-state ladder's colours, indexed by `devTier`. */
@@ -110,6 +133,7 @@ export function vehiclePopup(
   map: maplibregl.Map,
   vehicle_id: string,
   ctx: PopupCtx,
+  options: VehiclePopupOptions = {},
 ): LivePopup | null {
   // The sim mutates Vehicle objects in place (see sim/engine.ts), which is what
   // lets the rAF loop read `world.vehicles` every frame — so this reference stays
@@ -119,21 +143,33 @@ export function vehiclePopup(
   const { t, lang } = ctx;
 
   const body = el('div', 'ptcc-pop');
+  body.dataset.vehicleId = v.vehicle_id;
+  if (options.hover) body.dataset.vehicleHover = '';
+  if (options.onPointerEnter) body.addEventListener('pointerenter', options.onPointerEnter);
+  if (options.onPointerLeave) body.addEventListener('pointerleave', options.onPointerLeave);
   body.append(el('div', 'ptcc-pop-id', v.vehicle_id));
-  body.append(el('div', 'ptcc-pop-sub', `${routeName(v.route_id, lang)} · ${t('op.operator')} ${v.operator_id}`));
+  body.append(el('div', 'ptcc-pop-sub', routeName(v.route_id, lang)));
+  body.append(el('div', 'ptcc-pop-direction', routeDirection(v, lang)));
 
   const rows = el('div', 'ptcc-pop-rows');
+  const tripRow = row(t('map.popTrip'), '');
+  const crewRow = row(t('map.popCrew'), '');
   const devRow = row(t('veh.scheduleDeviation'), '');
   const loadRow = row(t('veh.passengerLoad'), '');
   const stopRow = row(t('veh.nextStop'), '');
   const statusRow = row(t('veh.status'), '');
-  rows.append(devRow, loadRow, stopRow, statusRow);
+  const alertRow = row(t('map.popAlert'), '');
+  const forecastRow = row(t('map.popForecast'), '');
+  rows.append(tripRow, crewRow, devRow, loadRow, stopRow, statusRow, alertRow, forecastRow);
   body.append(rows);
 
   /** Every live figure in one place, so the initial paint and `tick()` cannot
    *  drift apart. Re-reads the thresholds too: they are operator-adjustable. */
   const paint = () => {
     const th = useSettings.getState().th;
+
+    setRow(tripRow, `${tripIdOf(v)} · ${Math.round(v.trip_progress * 100)}%`);
+    setRow(crewRow, `${t('op.operator')} ${v.operator_id} · ${v.driver_id || '—'}`);
 
     // Schedule deviation, on the one three-state ladder (map/risk.ts devTier).
     setRow(
@@ -147,7 +183,7 @@ export function vehiclePopup(
     const band = bandOf(pct);
     setRow(
       loadRow,
-      `${Math.round(pct)} % · ${t(band.key as I18nKey)}`,
+      `${Math.round(pct)}% · ${t(band.key as I18nKey)}`,
       LOAD_BANDS.find((b) => b.key === band.key)?.color,
     );
 
@@ -169,6 +205,30 @@ export function vehiclePopup(
             : 'veh.outOfService',
       ),
       v.status === 'in_service' ? undefined : 'var(--color-sev-crit)',
+    );
+
+    const lead = useAlerts.getState().alerts.find((a) => a.vehicle_id === v.vehicle_id);
+    setRow(
+      alertRow,
+      lead ? t(`sev.${lead.severity}` as I18nKey) : t('map.popNone'),
+      lead?.severity === 'critical'
+        ? 'var(--color-sev-crit)'
+        : lead?.severity === 'warning'
+          ? 'var(--color-sev-warn)'
+          : undefined,
+    );
+
+    const forecasts = Object.values(useForecast.getState().byHorizon)
+      .flat()
+      .filter((f) => f.route_id === v.route_id)
+      .sort((a, b) => a.horizon_min - b.horizon_min || b.probability - a.probability);
+    const forecast = forecasts[0];
+    setRow(
+      forecastRow,
+      forecast
+        ? `+${forecast.horizon_min} ${t('map.popMin')} · ${Math.round(forecast.probability * 100)}% · ${Math.round(forecast.confidence * 100)}% ${t('map.popConfidence')}`
+        : t('map.popNone'),
+      forecast ? 'var(--color-forecast)' : undefined,
     );
   };
   paint();
@@ -194,11 +254,11 @@ export function vehiclePopup(
   }
 
   const popup: LivePopup = new maplibregl.Popup({
-    closeButton: true,
-    closeOnClick: true,
-    maxWidth: '18rem',
+    closeButton: !options.hover,
+    closeOnClick: !options.hover,
+    maxWidth: '22rem',
     offset: 10,
-    className: 'ptcc-popup',
+    className: options.hover ? 'ptcc-popup ptcc-hover-popup' : 'ptcc-popup',
   });
 
   body.append(
@@ -208,7 +268,7 @@ export function vehiclePopup(
           label: t('map.actOpenDetail'),
           run: () => {
             useSelection.getState().selectVehicle(v.vehicle_id);
-            location.hash = `#/vehicle/${v.vehicle_id}`;
+            location.hash = `#/vehicle/${v.vehicle_id}?from=map&trip=${encodeURIComponent(tripIdOf(v))}`;
           },
         },
         {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { engine, startBridge, useSettings, useSim, warmup } from '../store';
 import { Shell } from './Shell';
 import { useRoleEntry } from '../modules/roles/store';
@@ -13,6 +13,9 @@ export const MODULES = [
   { path: 'regularity', key: 'nav.regularity', evidence: 'CONFIRMED' },
   { path: 'passenger', key: 'nav.passenger', evidence: 'CONFIRMED' },
   { path: 'alerts', key: 'nav.alerts', evidence: 'CONFIRMED' },
+  // First-class entry for scenario-2 forecasting. The model also remains visible from
+  // Alerts so existing operator journeys and saved demonstrations keep working.
+  { path: 'forecast', key: 'nav.forecast', evidence: 'INFERRED' },
   { path: 'comms', key: 'nav.comms', evidence: 'CONFIRMED' },
   { path: 'health', key: 'nav.health', evidence: 'INFERRED' },
   { path: 'operators', key: 'nav.operators', evidence: 'CONFIRMED' },
@@ -58,6 +61,29 @@ export function useHashQuery(): URLSearchParams {
 
 export function App() {
   const [booted, setBooted] = useState(false);
+  const [routeAnnouncement, setRouteAnnouncement] = useState('');
+  const announcedPath = useRef(pathOf());
+
+  useEffect(() => {
+    const announce = () => {
+      const nextPath = pathOf();
+      // Query-only changes are in-page state (Analytics tabs and filters). Stealing
+      // focus from the selected tab to the page heading would break APG navigation.
+      if (nextPath === announcedPath.current) return;
+      announcedPath.current = nextPath;
+      // Let Shell commit the destination heading before moving focus. This gives SPA
+      // navigation the same orientation a full page load provides.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const heading = document.querySelector<HTMLElement>('main h1, h1');
+        if (!heading) return;
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+        setRouteAnnouncement(heading.textContent?.trim() ?? '');
+      }));
+    };
+    addEventListener('hashchange', announce);
+    return () => removeEventListener('hashchange', announce);
+  }, []);
 
   useEffect(() => {
     // Warm up so the demo opens on a plausible network rather than an empty one.
@@ -98,5 +124,10 @@ export function App() {
     );
   }
   if (!entered) return <RoleSelect />;
-  return <Shell />;
+  return (
+    <>
+      <Shell />
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{routeAnnouncement}</span>
+    </>
+  );
 }

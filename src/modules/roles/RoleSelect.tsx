@@ -50,7 +50,7 @@ export default function RoleSelect() {
     // The scroll moved off the root and onto the card list, so the DEMO badge is pinned to
     // the bottom of the screen instead of scrolling out of sight with the content.
     <div className="flex h-full flex-col bg-[var(--color-bg0)]">
-      <header className="flex shrink-0 items-center gap-3 px-6 pt-5">
+      <header className="flex shrink-0 items-center gap-2 px-3 pt-3 sm:gap-3 sm:px-6 sm:pt-5">
         <div className="grid h-8 w-8 place-items-center rounded bg-[var(--color-accent)] text-[15px] font-bold text-[var(--color-on-accent)]">P</div>
         <span className="t-head">{t('app.title')}</span>
         <div className="flex-1" />
@@ -62,7 +62,7 @@ export default function RoleSelect() {
         </Button>
       </header>
 
-      <div className="mx-auto flex w-full min-h-0 max-w-[1100px] flex-1 flex-col gap-4 overflow-auto px-6 py-6">
+      <div className="mx-auto flex w-full min-h-0 max-w-[1100px] flex-1 flex-col gap-4 overflow-auto px-3 py-4 sm:px-6 sm:py-6">
         <div>
           <h1 className="t-head text-[22px] text-[var(--color-text1)]">{t('role.selectTitle')}</h1>
           <p className="t-body mt-1 max-w-[70ch] text-[var(--color-text2)]">{t('role.selectSub')}</p>
@@ -77,7 +77,7 @@ export default function RoleSelect() {
           </p>
         </div>
 
-        <ul className="grid grid-cols-3 gap-3">
+        <ul data-role-select-grid className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {ROLE_ORDER.map((id) => {
             const spec = specOf(id);
             const active = sel === id;
@@ -119,7 +119,7 @@ export default function RoleSelect() {
           })}
         </ul>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
           <Button variant="primary" onClick={() => enter(sel)}>
             {t('role.continueAs', { role: t(roleLabelKey(sel)) })} ⏎
           </Button>

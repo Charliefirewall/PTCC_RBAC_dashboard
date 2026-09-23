@@ -28,7 +28,7 @@
 
 import { useMemo, useState } from 'react';
 import { useSim, useSettings, world } from '../../store';
-import { useT } from '../../i18n/t';
+import { useLang, useT } from '../../i18n/t';
 import type { I18nKey } from '../../i18n/dict';
 import { DEPOTS, DEPOT_BY_ID } from '../../data/depots';
 import {
@@ -135,6 +135,9 @@ export default function Depot() {
         <Callout kind="warn" dashed title={t('dep.notOps')}>
           {t('dep.noDepotEntity')}
         </Callout>
+        <Callout kind="info" className="mt-2" title={t('support.dep.frame')}>
+          {t('support.dep.frameBody')}
+        </Callout>
 
         <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <KpiTile
@@ -228,6 +231,7 @@ function Heatmap({
   over: number;
 }) {
   const t = useT();
+  const lang = useLang();
   return (
     <div className="overflow-x-auto">
       <div
@@ -254,9 +258,9 @@ function Heatmap({
                   on ? 'bg-[var(--color-bg3)]' : ''
                 }`}
               >
-                <span className="t-body truncate text-[var(--color-text1)]">{depot.name_en}</span>
+                <span className="t-body truncate text-[var(--color-text1)]">{lang === 'mn' ? depot.name_mn : depot.name_en}</span>
                 <span className="t-meta truncate">
-                  {depot.name_mn} · {fmtInt(depot.workshop_hours_per_week)} {t('dep.hours')}/{t('dep.week').toLowerCase()}
+                  {lang === 'mn' ? null : `${depot.name_mn} · `}{fmtInt(depot.workshop_hours_per_week)} {t('dep.hours')}/{t('dep.week').toLowerCase()}
                 </span>
               </button>
               {p.weeks.map((w) => (
@@ -265,7 +269,7 @@ function Heatmap({
                   content={
                     <>
                       <span className="font-semibold">
-                        {depot.name_en} · {t('dep.weekShort', { n: w.week })}
+                        {lang === 'mn' ? depot.name_mn : depot.name_en} · {t('dep.weekShort', { n: w.week })}
                       </span>
                       <br />
                       <span className="t-meta">
@@ -282,7 +286,7 @@ function Heatmap({
                     onClick={() => onSelect(p.depot_id)}
                     className="num flex h-7 w-full items-center justify-center rounded text-[10px] font-semibold"
                     style={cellStyle(w, over)}
-                    aria-label={`${depot.name_en} ${t('dep.weekShort', { n: w.week })} ${Math.round(w.util_pct)} %`}
+                    aria-label={`${lang === 'mn' ? depot.name_mn : depot.name_en} ${t('dep.weekShort', { n: w.week })} ${Math.round(w.util_pct)} %`}
                   >
                     {Math.round(w.util_pct)}
                   </button>
@@ -323,6 +327,7 @@ function Legend() {
 
 function Detail({ plan, horizon }: { plan: DepotPlan | undefined; horizon: number }) {
   const t = useT();
+  const lang = useLang();
   const depot = plan ? DEPOT_BY_ID.get(plan.depot_id) : undefined;
 
   const weekCols: Column<DepotWeek>[] = [
@@ -374,7 +379,7 @@ function Detail({ plan, horizon }: { plan: DepotPlan | undefined; horizon: numbe
   return (
     <Panel
       className="shrink-0"
-      title={t('dep.detailTitle', { depot: depot.name_en })}
+      title={t('dep.detailTitle', { depot: lang === 'mn' ? depot.name_mn : depot.name_en })}
       sub={t('dep.detailSub')}
       right={<EvidenceTag label="INFERRED" cite="rules/predict.ts · RUL model" />}
       bodyClassName="p-3"

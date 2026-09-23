@@ -28,7 +28,7 @@ import { useMemo, useState } from 'react';
 import { mulberry32 } from '../../sim/rng';
 import type { OperatorId, Vehicle } from '../../sim/types';
 import type { I18nKey } from '../../i18n/dict';
-import { useT } from '../../i18n/t';
+import { useT, useTx } from '../../i18n/t';
 import { useSelection, useSim } from '../../store';
 import { LOAD_BANDS, bandOf } from '../../rules/thresholds';
 import { seedOf } from '../../rules/predict';
@@ -203,6 +203,7 @@ function Simulated() {
 
 export default function FleetHealth() {
   const t = useT();
+  const tx = useTx();
   const snap = useSim((s) => s.snap);
   const metrics = useSim((s) => s.metrics);
   const selected = useSelection((s) => s.vehicle_id);
@@ -268,7 +269,7 @@ export default function FleetHealth() {
     {
       key: 'status',
       label: t('reg.status'),
-      render: () => <StatusPill tone="warn">{tab.toUpperCase()} offline</StatusPill>,
+      render: () => <StatusPill tone="warn">{tx(tab.toUpperCase())} {tx('offline')}</StatusPill>,
     },
   ];
   const profile = focus ? simulatedCostPerBus(focus.vehicle_id) : null;
@@ -289,6 +290,9 @@ export default function FleetHealth() {
 
   return (
     <div className="flex h-full flex-col gap-2 overflow-auto">
+      <div className="t-label shrink-0 uppercase tracking-wider text-[var(--color-text2)]" data-health-section="observed">
+        {t('support.health.observed')} · <EvidenceTag label="CONFIRMED" />
+      </div>
       {/* ------------------------------------------------ CONFIRMED half */}
       <div className="grid shrink-0 grid-cols-2 gap-2 lg:grid-cols-4">
         <KpiTile labelKey="widget.afcOffline" value={int(metrics.offline.afc)} tone={metrics.offline.afc ? 'warn' : 'ok'} evidence="CONFIRMED" />
@@ -306,7 +310,7 @@ export default function FleetHealth() {
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
               {(['afc', 'tbox', 'cctv'] as const).map((k) => (
                 <Button key={k} size="sm" variant={tab === k ? 'primary' : 'ghost'} onClick={() => setTab(k)}>
-                  {k.toUpperCase()} {offlineLists[k].length}
+                  {tx(k.toUpperCase())} {offlineLists[k].length}
                 </Button>
               ))}
               <EvidenceTag label="CONFIRMED" cite="L1119–L1122" />
@@ -352,7 +356,7 @@ export default function FleetHealth() {
       </div>
 
       {/* ------------------------------------------------ INFERRED half: proposed extension */}
-      <section className="shrink-0">
+      <section className="shrink-0 scroll-mt-2" data-health-section="simulated">
         {/* Source/provenance text - kept verbatim, rendered quietly. */}
         <Callout kind="info" dashed icon={<EvidenceTag label="INFERRED" cite="CV ¶3 · R1096" />} className="mb-2">
           {t('health.proposed')}
@@ -410,7 +414,7 @@ export default function FleetHealth() {
                   label: t('health.nextService'),
                   num: true,
                   sortable: true,
-                  render: (c) => <span className="text-[var(--color-text3)]">{int(c.next_service_km)} km</span>,
+                  render: (c) => <span className="text-[var(--color-text3)]">{int(c.next_service_km)} {t('unit.km')}</span>,
                 },
               ]}
             />
@@ -539,6 +543,9 @@ export default function FleetHealth() {
       </section>
 
       {/* ---------------------------------------------- component prediction (§9.2 A) */}
+      <div className="t-label shrink-0 uppercase tracking-wider text-[var(--color-text2)]" data-health-section="predictive">
+        {t('support.health.predictive')} · <EvidenceTag label="INFERRED" />
+      </div>
       <Predictive vehicles={vehicles} routes={snap.routes} />
     </div>
   );

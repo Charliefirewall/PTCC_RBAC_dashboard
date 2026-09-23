@@ -23,7 +23,7 @@ import type { I18nKey } from '../../i18n/dict';
 /** Nav paths this workstream may route to. Kept as strings so App.tsx stays the owner. */
 export type NavPath =
   | 'dashboard' | 'command' | 'map' | 'regularity' | 'passenger' | 'alerts' | 'comms'
-  | 'health' | 'operators' | 'copilot' | 'agentic' | 'roi' | 'analytics' | 'multimodal' | 'settings'
+  | 'health' | 'operators' | 'copilot' | 'agentic' | 'roi' | 'analytics' | 'forecast' | 'multimodal' | 'settings'
   | 'provenance' | 'depot' | 'platform';
 
 /**
@@ -79,7 +79,7 @@ export interface RoleSpec {
 }
 
 const ALL_NAV: NavPath[] = [
-  'dashboard', 'command', 'map', 'regularity', 'passenger', 'alerts', 'comms',
+  'dashboard', 'command', 'map', 'regularity', 'passenger', 'alerts', 'forecast', 'comms',
   'health', 'operators', 'copilot', 'agentic', 'roi', 'analytics', 'multimodal', 'settings',
   'provenance', 'depot', 'platform',
 ];
@@ -95,7 +95,7 @@ export const ROLE_SPECS: Record<RoleId, RoleSpec> = {
     composition: 'INFERRED',
     cite: 'R2905 · CV walkthrough',
     home: 'command',
-    nav: ['dashboard', 'command', 'map', 'regularity', 'passenger', 'alerts', 'health', 'operators', 'copilot', 'agentic', 'analytics', 'roi', 'settings', 'provenance', 'depot', 'platform'],
+    nav: ['dashboard', 'command', 'map', 'regularity', 'passenger', 'alerts', 'forecast', 'health', 'operators', 'copilot', 'agentic', 'analytics', 'roi', 'settings', 'provenance', 'depot', 'platform'],
     widgets: ['networkHealth', 'opsKpi', 'aiAlerts', 'activeIncidents'],
     can: ['acknowledge_alert', 'create_event', 'advance_stage', 'complete_action', 'send_coordination', 'configure_thresholds', 'revoke_auto_action'],
   },
@@ -108,7 +108,7 @@ export const ROLE_SPECS: Record<RoleId, RoleSpec> = {
     composition: 'INFERRED',
     cite: 'R2902, R2919-R2925 · CV walkthrough',
     home: 'dashboard',
-    nav: ['dashboard', 'alerts', 'map', 'command', 'comms', 'copilot', 'agentic', 'analytics'],
+    nav: ['dashboard', 'alerts', 'forecast', 'map', 'command', 'comms', 'copilot', 'agentic', 'analytics'],
     widgets: ['incidentQueue', 'incidentDetail', 'escalation', 'activeIncidents'],
     can: ['acknowledge_alert', 'create_event', 'advance_stage', 'complete_action', 'escalate_event', 'send_coordination', 'escalate_l3'],
   },
@@ -122,7 +122,7 @@ export const ROLE_SPECS: Record<RoleId, RoleSpec> = {
     composition: 'INFERRED',
     cite: 'R2903, L1443',
     home: 'dashboard',
-    nav: ['dashboard', 'comms', 'alerts', 'map', 'analytics'],
+    nav: ['dashboard', 'comms', 'alerts', 'forecast', 'map', 'analytics'],
     widgets: ['pendingApprovals', 'commsLog', 'activeIncidents'],
     can: ['acknowledge_alert', 'approve_message', 'send_coordination'],
   },
@@ -135,7 +135,7 @@ export const ROLE_SPECS: Record<RoleId, RoleSpec> = {
     composition: 'INFERRED',
     cite: 'R2904, R2929 · CV walkthrough',
     home: 'dashboard',
-    nav: ['dashboard', 'map', 'alerts', 'regularity', 'health', 'comms'],
+    nav: ['dashboard', 'map', 'alerts', 'forecast', 'regularity', 'health', 'comms'],
     widgets: ['resourceStatus', 'dispatchRecs', 'activeIncidents', 'fieldMap'],
     can: ['acknowledge_alert', 'complete_action', 'send_coordination', 'assign_resource'],
   },

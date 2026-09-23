@@ -15,6 +15,7 @@
  * forecast rows are an extension outside R1096 scope.
  */
 
+import { useTx } from '../../i18n/t';
 import { devHistory } from '../../store/forecast';
 import { useMemo, useState } from 'react';
 import { Empty, EvidenceTag, Panel, Sparkline } from '../../components/primitives';
@@ -180,14 +181,15 @@ export function TripTab({ v, fromAlert }: { v: Vehicle; fromAlert?: string | nul
           <DriverPanel v={v} />
           <PositionPanel v={v} route={route} />
           <Panel title={t('trip.speed')} className="shrink-0" bodyClassName="px-3 py-2">
-            <Sparkline values={tripSpeeds.length > 1 ? tripSpeeds : [0, 0]} width={280} height={40} />
+            <div aria-hidden="true"><Sparkline values={tripSpeeds.length > 1 ? tripSpeeds : [0, 0]} width={280} height={40} /></div>
             <p className="num t-meta mt-1">
               {t('trip.speedStats', { avg: avg.toFixed(1), max: max.toFixed(0), n: tripSpeeds.length })}
             </p>
             {/* E4: passenger load along the trip, from the same stop log */}
             <p className="panel-title mt-2">{t('trip.load')}</p>
             <div data-load-profile="">
-              <Sparkline values={log.length > 1 ? log.map((a) => (a.pax / Math.max(1, v.capacity)) * 100) : [0, 0]} width={280} height={28} color="var(--color-text2)" />
+              <div aria-hidden="true"><Sparkline values={log.length > 1 ? log.map((a) => (a.pax / Math.max(1, v.capacity)) * 100) : [0, 0]} width={280} height={28} color="var(--color-text2)" /></div>
+              <p className="num t-meta mt-1">{t('uxveh.loadSummary', { current: Math.round(v.pax_count / Math.max(1, v.capacity) * 100), peak: Math.round(Math.max(0, ...log.map((a) => a.pax / Math.max(1, v.capacity) * 100))) })}</p>
             </div>
           </Panel>
         </div>
@@ -206,7 +208,7 @@ function DriverPanel({ v }: { v: Vehicle }) {
         {maskName(lang === 'mn' ? d.name_mn : d.name_en)}
       </p>
       <p className="num t-meta">
-        {d.driver_id} · {t('trip.shift')} {d.shift} · {t('trip.radio')} {d.radio} · {t('trip.years')} {d.years}
+        {d.driver_id} · {t('trip.shift')} {t(d.shift === 'AM' ? 'trip.shiftAm' : 'trip.shiftPm')} · {t('trip.radio')} {d.radio} · {t('trip.years')} {d.years}
       </p>
       <p className="t-meta mt-1 italic">{t('trip.maskNote')} · {t('trip.driverNote')}</p>
     </Panel>
@@ -230,9 +232,13 @@ function PositionPanel({ v, route }: { v: Vehicle; route: Route }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [route],
   );
+  const ordered = v.direction === 0 ? route.stops : [...route.stops].reverse();
+  const start = ordered[0];
+  const end = ordered.at(-1);
   return (
     <Panel title={t('trip.position')} className="shrink-0" bodyClassName="flex items-center gap-3 px-3 py-2">
-      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="h-auto max-w-[60%] shrink-0" role="img" aria-label={t('trip.position')} data-minimap="">
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="h-auto max-w-[60%] shrink-0" role="img" aria-label={t('uxveh.minimapLabel', { route: route.route_id, from: start?.name_en ?? '—', to: end?.name_en ?? '—', bus: v.vehicle_id })} data-minimap="">
+        <title>{t('uxveh.minimapLabel', { route: route.route_id, from: start?.name_en ?? '—', to: end?.name_en ?? '—', bus: v.vehicle_id })}</title>
         <path d={path} fill="none" stroke="var(--color-line)" strokeWidth={3} />
         {route.stops.map((s) => (
           <circle key={s.stop_id} cx={px(s.longitude)} cy={py(s.latitude)} r={1.8} fill="var(--color-text3)" />
@@ -243,7 +249,7 @@ function PositionPanel({ v, route }: { v: Vehicle; route: Route }) {
       <p className="num t-meta">
         {v.latitude.toFixed(5)}, {v.longitude.toFixed(5)}
         <br />
-        {Math.round(v.speed)} km/h
+        {Math.round(v.speed)} {t('unit.kmh')}
       </p>
       <button
         type="button"
@@ -278,6 +284,7 @@ function TripChart({
   prev: { k: number; dev_s: number }[] | null;
 }) {
   const t = useT();
+  const theme = useSettings((s) => s.theme);
   const fc = bandColor({ token: '--color-forecast' }, '#b48cf2');
   const accent = bandColor({ token: '--color-accent' }, '#4d8df0');
   const muted = bandColor({ token: '--color-text3' }, '#8794a6');
@@ -296,14 +303,14 @@ function TripChart({
   const L = {
     band: t('trip.bandSeries'), mean: t('trip.normSeries'), actual: t('trip.actualSeries'), fc: t('fc.legend'), prev: t('trip.prevSeries'),
   };
-  const fmt = (x: number | null) => (x === null ? DASH : `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(1)} min`);
+  const fmt = (x: number | null) => (x === null ? DASH : `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(1)} ${t('unit.min')}`);
   const dot = (c: string) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px"></span>`;
   const esc = (x: string) => x.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
   const option = {
     ...CHART_BASE,
     // 'p10' is the invisible floor of the stacked band - never offered in the legend
-    legend: { top: 0, left: 0, itemWidth: 16, itemHeight: 8, textStyle: { fontSize: 10 }, data: [L.actual, L.fc, L.mean, L.band, ...(prev ? [L.prev] : [])] },
-    grid: { left: 48, right: 16, top: 36, bottom: 40, containLabel: false },
+    legend: { type: 'scroll', top: 0, left: 0, right: 0, itemWidth: 16, itemHeight: 8, textStyle: { fontSize: 10 }, data: [L.actual, L.fc, L.mean, L.band, ...(prev ? [L.prev] : [])] },
+    grid: { ...CHART_BASE.grid, left: 48, right: 16, top: 40, bottom: 40, containLabel: true },
     tooltip: {
       ...CHART_BASE.tooltip,
       formatter: (ps: { dataIndex: number }[]) => {
@@ -330,14 +337,16 @@ function TripChart({
     },
     series: [
       // p10-p90 band: an invisible floor plus a stacked fill
-      { name: 'p10', type: 'line', stack: 'band', symbol: 'none', silent: true, lineStyle: { opacity: 0 }, data: p10 },
+      { id: 'norm-floor', name: 'p10', type: 'line', stack: 'band', symbol: 'none', silent: true, lineStyle: { opacity: 0 }, data: p10 },
       {
+        id: 'norm-band',
         name: L.band, type: 'line', stack: 'band', symbol: 'none', silent: true, lineStyle: { opacity: 0 },
         itemStyle: { color: muted }, areaStyle: { color: muted, opacity: 0.18 },
         data: cats.map((_, k) => (p10[k] === null || p90[k] === null ? null : Math.round((p90[k]! - p10[k]!) * 10) / 10)),
       },
-      { name: L.mean, type: 'line', symbol: 'none', lineStyle: { color: muted, type: 'dotted', width: 1.5 }, itemStyle: { color: muted }, data: mean },
+      { id: 'norm-mean', name: L.mean, type: 'line', symbol: 'none', lineStyle: { color: muted, type: 'dotted', width: 1.5 }, itemStyle: { color: muted }, data: mean },
       {
+        id: 'trip-actual',
         name: L.actual, type: 'line', symbolSize: 4, lineStyle: { color: accent, width: 2 }, itemStyle: { color: accent }, data: actual,
         // where the bus is now
         markLine: {
@@ -347,13 +356,14 @@ function TripChart({
           data: [{ xAxis: cats[k0] ?? '1' }],
         },
       },
-      { name: L.fc, type: 'line', connectNulls: true, symbolSize: 3, lineStyle: { color: fc, type: 'dashed', width: 2 }, itemStyle: { color: fc }, data: fcast },
+      { id: 'trip-forecast', name: L.fc, type: 'line', connectNulls: true, symbolSize: 3, lineStyle: { color: fc, type: 'dashed', width: 2 }, itemStyle: { color: fc }, data: fcast },
       // always present (all-null when off): the wrapper merges options, so a series
       // that disappeared would otherwise linger on the canvas
-      { name: L.prev, type: 'line', symbol: 'none', lineStyle: { color: muted, width: 1 }, itemStyle: { color: muted }, data: prev ? prevData : cats.map(() => null) },
+      { id: 'previous-trip', name: L.prev, type: 'line', symbol: 'none', lineStyle: { color: muted, width: 1 }, itemStyle: { color: muted }, data: prev ? prevData : cats.map(() => null) },
     ],
   };
-  return <EChart option={option} />;
+  void theme;
+  return <EChart option={option} ariaLabel={`${L.actual}, ${L.fc}, ${L.mean} · ${t('uxveh.axisDev')} / ${t('uxveh.axisStop')}`} />;
 }
 
 /**
@@ -363,6 +373,7 @@ function TripChart({
  */
 function SopTimeline({ alertId, note }: { alertId: string; note: string }) {
   const t = useT();
+  const tx = useTx();
   const audit = useEvents((s) => s.audit);
   const comms = useComms((s) => s.coordination);
   const pending = useSop((s) => s.pending[alertId]);
@@ -377,8 +388,8 @@ function SopTimeline({ alertId, note }: { alertId: string; note: string }) {
         {rows.map((a, i) => (
           <li key={i}>
             <span className="text-[var(--color-text3)]">{a.at.slice(11, 19)}</span> ·{' '}
-            {t(`audit.${a.action}` as I18nKey) === `audit.${a.action}` ? a.action : t(`audit.${a.action}` as I18nKey)} ·{' '}
-            <span className="text-[var(--color-text3)]">{a.actor}</span>
+            {t(`audit.${a.action}` as I18nKey) === `audit.${a.action}` ? tx(a.action) : t(`audit.${a.action}` as I18nKey)} ·{' '}
+            <span className="text-[var(--color-text3)]">{tx(a.actor)}</span>
           </li>
         ))}
         {pending !== undefined ? <li className="text-[var(--color-sev-warn)]">{t('sop.sendingIn', { s: Math.max(0, Math.round(pending - world.sim_time_s)) })}</li> : null}

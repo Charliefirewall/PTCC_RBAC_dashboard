@@ -95,6 +95,68 @@ describe('SOP execution', () => {
     expect(c[0]!.recipient).toBe('tcc');
     expect(c[0]!.status).toBe('draft');
     expect(c[0]!.auto).toBeUndefined();
+    expect(c[0]!.provenance).toBe('sop_l3');
+    expect(c[0]!.intent).toBe('actual_l3_escalation');
+    expect(c[0]!.channel).toBe('manual (telephone)');
+    expect(useEvents.getState().audit[0]!.action).toBe('auto_draft_l3');
+  });
+
+  it('keeps analytics proposals distinct from L3 and carries their evidence into a human-gated draft', () => {
+    const input = {
+      recipient: 'tcc' as const,
+      message_type: 'coordination_request' as const,
+      channel: 'PTCC analytics',
+      operator: 'operations_controller',
+      content: 'Please review signal priority before the selected trip.',
+      reason: 'Recurring weekday AM excess on Peace Ave.',
+      evidence: ['12 of 20 historical trips affected', 'Forecast contribution +4.2 min'],
+      recommended_action: 'Review signal priority during the predicted window.',
+      context: { route_id: 'R7', segment_id: 'seg-peace', day: 'Monday', start_time: '08:00' },
+    };
+
+    useSettings.setState({ role: 'field_inspector' });
+    expect(useComms.getState().draftProactiveCoordination(input)).toBeUndefined();
+    expect(useComms.getState().coordination).toHaveLength(0);
+
+    useSettings.setState({ role: 'operations_controller' });
+    const msg = useComms.getState().draftProactiveCoordination(input);
+    expect(msg?.status).toBe('draft');
+    expect(msg?.provenance).toBe('analytics_proactive');
+    expect(msg?.intent).toBe('proactive_proposal');
+    expect(msg?.channel).toBe('manual (telephone)');
+    expect(msg?.evidence).toEqual(input.evidence);
+    expect(useEvents.getState().audit[0]!.action).toBe('proactive_coordination_proposed');
+    expect(useEvents.getState().audit.some((x) => x.action === 'auto_draft_l3')).toBe(false);
+
+    expect(useComms.getState().sendDraft(msg!.communication_id, 'operations_controller')).toBe(true);
+    expect(useComms.getState().coordination[0]!.status).toBe('sent');
+    expect(useEvents.getState().audit[0]!.action).toBe('send_draft');
+  });
+
+  it('lets only an escalation role request Analytics escalation without claiming a confirmed L3', () => {
+    const request = {
+      operator: 'incident_manager',
+      content: 'Request senior review and manual Traffic Control Centre coordination.',
+      reason: 'The selected segment is forecast to contribute 7.1 minutes to the trip.',
+      evidence: ['18 of 24 comparable Monday trips delayed', 'Forecast confidence 84%'],
+      recommended_action: 'Review signal-priority coordination before departure.',
+      context: { route_id: 'R7', segment_id: 'seg-peace', day: 'Monday', start_time: '08:00' },
+    };
+
+    useSettings.setState({ role: 'operations_controller' });
+    expect(useComms.getState().requestAnalyticsEscalation(request)).toBeUndefined();
+
+    useSettings.setState({ role: 'incident_manager' });
+    const msg = useComms.getState().requestAnalyticsEscalation(request);
+    expect(msg).toMatchObject({
+      status: 'draft',
+      provenance: 'analytics_proactive',
+      intent: 'escalation_request',
+      recipient: 'tcc',
+      channel: 'manual (telephone)',
+    });
+    expect(useEvents.getState().audit[0]!.action).toBe('analytics_escalation_requested');
+    expect(useEvents.getState().audit.some((x) => x.action === 'auto_draft_l3')).toBe(false);
   });
 
   it('drafts once per incident: the network alert carries it, not each late route', () => {

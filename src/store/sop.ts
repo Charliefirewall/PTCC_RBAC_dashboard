@@ -116,9 +116,11 @@ export function runSop(alerts: Alert[], now_s: number): Alert[] {
       lastDone.set(`l3:${a.id}`, now_s);
       comms.draftCoordination({
         alert_id: a.id,
+        provenance: 'sop_l3',
+        intent: 'actual_l3_escalation',
         recipient: 'tcc',
         message_type: 'coordination_request',
-        channel: 'PTCC–TCC',
+        channel: 'manual (telephone)',
         operator: 'system (SOP L3)',
         content:
           a.rule_id === 'delay_network'

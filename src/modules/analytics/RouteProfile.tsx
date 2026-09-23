@@ -15,22 +15,21 @@
  * forecast for that start is the norm itself, and the screen says so.
  */
 
-import { devHistory } from '../../store/forecast';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getInstanceByDom } from 'echarts/core';
 import { useSettings, useSim, world } from '../../store';
 import { baselineOf, bucketOf, bucketStartS, BUCKETS, SIM_DOW } from '../../sim/baseline';
 import { hhmm } from '../../sim/engine';
 import { tripIdOf } from '../../sim/types';
-import { forecastStops } from '../../rules/forecast';
 import { segmentName } from '../../data/segments';
 import { EChart, AXIS, CHART_BASE } from '../../charts/EChart';
-import { Button, DataTable, Panel, type Column } from '../../components/primitives';
+import { Button, Empty, Panel, StatusPill } from '../../components/primitives';
 import { Select } from '../../components/kit';
 import { dayMatrix } from './dayMatrix';
 import { routeInsight } from './routeInsight';
 import { useLang, useT } from '../../i18n/t';
 import type { I18nKey } from '../../i18n/dict';
+import { buildPreTripRouteForecast, type RouteForecastStop } from './routeForecast';
 
 const HERO_FIRST = ['R7', 'R12', 'R5'];
 const EM_DASH = '—';
@@ -52,6 +51,8 @@ interface Row {
   actual: number | null;
   seg: string;
 }
+
+type ForecastRow = Row & RouteForecastStop;
 
 function Tile({ label, value, tone, sub, text, children }: { label: string; value?: ReactNode; tone?: string; sub?: ReactNode; text?: boolean; children?: ReactNode }) {
   return (
@@ -89,7 +90,9 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
   const [bucket, setBucket] = useState(() => bucketOf(world.sim_time_s));
   const [cmp, setCmp] = useState<number | null>(null); // E12 "compare with" day
   const [mode, setMode] = useState<'trip' | 'heat'>('trip'); // E13
+  const [selectedK, setSelectedK] = useState<number | null>(null);
   const heatRef = useRef<HTMLDivElement>(null);
+  const tripRef = useRef<HTMLDivElement>(null);
   const route = world.routeById.get(routeId)!;
   const base = baselineOf(world);
 
@@ -112,7 +115,6 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
             .sort((a, b) => b.log.length - a.log.length)[0]
         : undefined;
     const actual = new Map((bus?.log ?? []).map((a) => [a.stop_idx, a.dev_s]));
-    const fc = bus ? forecastStops(world, bus.v, dow, tau, devHistory.get(bus.v.route_id)) : null;
     const rows: Row[] = hops.map((h, i) => ({
       k: h.k,
       stop: lang === 'mn' ? h.stop.name_mn : h.stop.name_en,
@@ -122,9 +124,25 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
       actual: actual.get(h.k) ?? null,
       seg: h.seg_key ? segmentName(h.seg_key, lang) : EM_DASH,
     }));
-    return { hops, norm, bus, fc, rows };
+    return { hops, norm, bus, rows };
     // tick: the live trip's log and forecast change every sim step
   }, [base, route, routeId, dir, dow, bucket, tau, lang, tick]);
+
+  const tripForecast = useMemo(
+    () => buildPreTripRouteForecast(world, { routeId, direction: dir, dow, startBucket: bucket, tauMin: tau }),
+    [routeId, dir, dow, bucket, tau, tick],
+  );
+  const forecastRows = useMemo<ForecastRow[]>(
+    () =>
+      view.rows.map((r, i) => ({
+        ...r,
+        ...tripForecast.stops[i]!,
+        // Keep the localized display strings already used by the chart/table.
+        stop: r.stop,
+        seg: r.seg,
+      })),
+    [view.rows, tripForecast],
+  );
 
   // compare day's norm + the insight strip's numbers (the per-hop bars come from here too)
   const cmpNorm = useMemo(() => (cmp === null ? null : base.profile(route, dir, cmp, bucket)), [base, route, dir, cmp, bucket]);
@@ -133,7 +151,7 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
   const cmpName = cmp === null ? '' : t(`dow.${cmp}` as I18nKey);
 
   const option = useMemo(() => {
-    const { norm, bus, fc, rows } = view;
+    const { norm, bus, rows } = view;
     const F = cssVar('--color-forecast', '#b48cf2');
     const T1 = cssVar('--color-text1', '#e7edf5');
     const T3 = cssVar('--color-text3', '#8794a6');
@@ -143,8 +161,9 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
       // edge: the compare band is drawn as dotted p10/p90 outlines over a faint fill, so two
       // overlapping bands stay two colours instead of blending to grey
       // band = invisible p10 line + stacked (p90 - p10) area; 'all' so negative p10 still stacks
-      { name: stack, type: 'line', stack, stackStrategy: 'all', symbol: 'none', lineStyle: edge ? { color: edge, width: 1, type: 'dotted' } : { opacity: 0 }, data: p.map((n) => min(n.p10)), silent: true, z },
+      { id: `${stack}-floor`, name: stack, type: 'line', stack, stackStrategy: 'all', symbol: 'none', lineStyle: edge ? { color: edge, width: 1, type: 'dotted' } : { opacity: 0 }, data: p.map((n) => min(n.p10)), silent: true, z },
       {
+        id: `${stack}-band`,
         name,
         type: 'line',
         stack,
@@ -161,6 +180,7 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
     const series: Record<string, unknown>[] = [
       ...band(t('rp.s.band', { dow: dayName }), 'p10', norm, P, '40', 2),
       {
+        id: 'selected-norm-mean',
         name: t('rp.s.mean', { dow: dayName }),
         type: 'line',
         symbol: 'circle',
@@ -176,6 +196,7 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
     ];
     if (cmpNorm) {
       series.push(...band(t('rp.s.band', { dow: cmpName }), 'p10c', cmpNorm, C, '14', 1, C + 'cc'), {
+        id: 'compare-norm-mean',
         name: t('rp.s.mean', { dow: cmpName }),
         type: 'line',
         symbol: 'none',
@@ -185,12 +206,14 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
         data: cmpNorm.map((n) => min(n.mean)),
       });
     }
-    let fcData: (number | null)[] = norm.map((n) => min(n.mean));
+    const fcData: (number | null)[] = forecastRows.map((r) => min(r.forecastDeviationS));
     let actData: (number | null)[] | null = null;
-    if (bus && fc) {
-      const k0 = fc.k0;
+    if (bus) {
+      const arrived = rows.filter((r) => r.actual !== null);
+      const k0 = arrived.at(-1)?.k ?? -1;
       actData = rows.map((r) => (r.k <= k0 && r.actual !== null ? min(r.actual) : null));
       series.push({
+        id: 'live-actual',
         name: t('rp.actual'),
         type: 'line',
         symbolSize: 5,
@@ -200,23 +223,26 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
         itemStyle: { color: T1 },
         data: actData,
       });
-      const ahead = new Map(fc.ahead.map((a) => [a.k, a.mean]));
-      // starts at the bus's current deviation so the tail joins the actual line
-      fcData = rows.map((r) => (r.k === k0 ? min(bus.v.schedule_deviation) : ahead.has(r.k) ? min(ahead.get(r.k)!) : null));
     }
     series.push({
-      name: bus && fc ? t('rp.forecast') : t('rp.forecastNorm'),
+      id: 'pretrip-forecast',
+      name: t('rp.forecast'),
       type: 'line',
-      symbol: 'none',
-      // no live trip: the forecast IS the norm mean - a soft violet halo under the mean
-      // line instead of dashes that hide it
-      z: bus && fc ? 5 : 3,
-      lineStyle: bus && fc ? { color: F, width: 2, type: 'dashed' } : { color: F, width: 7, opacity: 0.35 },
-      itemStyle: { color: F },
+      symbol: 'circle',
+      symbolSize: 6,
+      z: 5,
+      lineStyle: { color: F, width: 2, type: 'dashed' },
+      itemStyle: {
+        color: (p: { dataIndex: number }) => {
+          const state = forecastRows[p.dataIndex]?.state;
+          return state === 'significant' ? cssVar('--color-sev-crit', '#ee5f63') : state === 'delay' ? cssVar('--color-sev-warn', '#e0a02e') : state === 'recovery' ? cssVar('--color-accent', '#4d8df0') : cssVar('--color-sev-ok', '#45b985');
+        },
+      },
       data: fcData,
     });
     // delay each hop adds: own small grid under the chart, seconds, same stop axis
-    const bar = (name: string, d: number[], col: string, hot: number) => ({
+    const bar = (id: string, name: string, d: number[], col: string, hot: number) => ({
+      id,
       name,
       type: 'bar',
       xAxisIndex: 1,
@@ -226,13 +252,13 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
       itemStyle: { color: col + 'aa' }, // legend swatch
       data: d.map((v, i) => ({ value: Math.round(v), itemStyle: { color: v < 0 ? T3 + '88' : i === hot ? col : col + 'aa' } })),
     });
-    series.push(bar(t('rp.s.hop', { dow: dayName }), ins.hop, P, ins.fastestK));
-    if (ins.hopCmp) series.push(bar(t('rp.s.hop', { dow: cmpName }), ins.hopCmp, C, -1));
+    series.push(bar('selected-hop-delay', t('rp.s.hop', { dow: dayName }), ins.hop, P, ins.fastestK));
+    if (ins.hopCmp) series.push(bar('compare-hop-delay', t('rp.s.hop', { dow: cmpName }), ins.hopCmp, C, -1));
 
     const dot = (c: string) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px"></span>`;
     const line = (c: string, label: string, n: { mean: number; p10: number; p90: number }) =>
-      `${dot(c)}${label} <b>${sgn(n.mean)} min</b> <span style="opacity:.7">(${t('rp.tt.range', { lo: m1(n.p10), hi: m1(n.p90) })})</span>`;
-    const secs = (v: number) => `${v >= 0 ? '+' : ''}${Math.round(v)} s`;
+      `${dot(c)}${label} <b>${sgn(n.mean)} ${t('unit.min')}</b> <span style="opacity:.7">(${t('rp.tt.range', { lo: m1(n.p10), hi: m1(n.p90) })})</span>`;
+    const secs = (v: number) => `${v >= 0 ? '+' : ''}${Math.round(v)} ${t('unit.s')}`;
     const tooltip = {
       ...CHART_BASE.tooltip,
       trigger: 'axis',
@@ -243,10 +269,10 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
         const out = [`<b>${r.stop}</b> <span style="opacity:.7">· ${t('rp.tt.planned', { time: hhmm(r.planned_s) })}</span>`, line(P, dayName, norm[i]!)];
         if (cmpNorm) {
           out.push(line(C, cmpName, cmpNorm[i]!));
-          out.push(`&nbsp;&nbsp;&nbsp;Δ ${t('rp.tt.diff', { a: dayName, b: cmpName })}: <b>${sgn(norm[i]!.mean - cmpNorm[i]!.mean)} min</b>`);
+          out.push(`&nbsp;&nbsp;&nbsp;Δ ${t('rp.tt.diff', { a: dayName, b: cmpName })}: <b>${sgn(norm[i]!.mean - cmpNorm[i]!.mean)} ${t('unit.min')}</b>`);
         }
-        if (actData?.[i] != null) out.push(`${dot(T1)}${t('rp.actual')} <b>${sgn(actData[i]! * 60)} min</b>`);
-        else if (bus && fcData[i] != null) out.push(`${dot(F)}${t('rp.forecast')} <b>${sgn(fcData[i]! * 60)} min</b>`);
+        if (actData?.[i] != null) out.push(`${dot(T1)}${t('rp.actual')} <b>${sgn(actData[i]! * 60)} ${t('unit.min')}</b>`);
+        if (fcData[i] != null) out.push(`${dot(F)}${t('rp.forecast')} <b>${sgn(fcData[i]! * 60)} ${t('unit.min')}</b> · ${t(`rp.state.${forecastRows[i]!.state}` as I18nKey)}`);
         if (i > 0) {
           const hc = ins.hopCmp ? ` · ${cmpName} ${secs(ins.hopCmp[i]!)}` : '';
           out.push(`<span style="opacity:.7">${t('rp.tt.hop')}: ${dayName} ${secs(ins.hop[i]!)}${hc}</span>`);
@@ -270,9 +296,10 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
         data: series.map((s) => s.name as string).filter((n) => n !== 'p10' && n !== 'p10c'),
       },
       grid: [
-        { left: 58, right: 18, top: 34, bottom: 232 },
-        { left: 58, right: 18, height: 72, bottom: 128 },
+        { left: 58, right: 18, top: 34, bottom: 232, containLabel: true },
+        { left: 58, right: 18, height: 72, bottom: 128, containLabel: true },
       ],
+      dataZoom: [{ type: 'inside', xAxisIndex: [0, 1], filterMode: 'none', minValueSpan: Math.min(5, stops.length) }],
       xAxis: [
         { type: 'category', gridIndex: 0, data: stops, ...AXIS, axisLabel: { show: false } },
         {
@@ -284,7 +311,7 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
           nameLocation: 'middle',
           nameGap: 112,
           nameTextStyle: { fontSize: 11 },
-          axisLabel: { ...AXIS.axisLabel, rotate: 45, interval: 0, fontSize: 10, width: 110, overflow: 'truncate' },
+          axisLabel: { ...AXIS.axisLabel, rotate: 45, interval: Math.max(0, Math.ceil(stops.length / 14) - 1), fontSize: 10, width: 110, overflow: 'truncate' },
         },
       ],
       yAxis: [
@@ -302,13 +329,14 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
       ],
       series,
     };
-  }, [view, t, theme, cmpNorm, ins, dayName, cmpName]);
+  }, [view, forecastRows, t, theme, cmpNorm, ins, dayName, cmpName]);
 
   // E13: whole day at a glance - rows = start buckets, cols = stops, value = norm mean (min)
   const heatOption = useMemo(() => {
     if (mode !== 'heat') return null;
     const m = dayMatrix(base, route, dir, dow);
     const flat = m.flat();
+    if (!flat.length) return null;
     const times = Array.from({ length: BUCKETS }, (_, b) => hhmm(bucketStartS(b)));
     const stops = view.rows.map((r) => r.stop);
     return {
@@ -316,23 +344,26 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
       tooltip: {
         ...CHART_BASE.tooltip,
         trigger: 'item',
-        formatter: (p: { value: [number, number, number] }) => `${times[p.value[1]]} · ${stops[p.value[0]]}: ${p.value[2].toFixed(1)} min`,
+        formatter: (p: { value: [number, number, number] }) =>
+          `<b>${routeId} · ${dayName}</b><br/>${times[p.value[1]]} · ${stops[p.value[0]]}<br/>${t('rp.axis.dev')}: ${p.value[2].toFixed(1)} ${t('unit.min')}`,
       },
-      grid: { ...CHART_BASE.grid, left: 44, right: 12, top: 8, bottom: 110 },
-      xAxis: { type: 'category', data: stops, ...AXIS, axisLabel: { ...AXIS.axisLabel, rotate: 40, fontSize: 9, hideOverlap: true } },
-      yAxis: { type: 'category', data: times, inverse: true, ...AXIS, axisLabel: { ...AXIS.axisLabel, interval: 3 } },
+      grid: { ...CHART_BASE.grid, left: 8, right: 12, top: 8, bottom: 94 },
+      xAxis: { ...AXIS, type: 'category', data: stops, name: t('chart.axis.stop'), nameLocation: 'middle', nameGap: 60, axisLabel: { ...AXIS.axisLabel, rotate: 45, fontSize: 9, hideOverlap: true } },
+      yAxis: { ...AXIS, type: 'category', data: times, inverse: true, name: t('chart.axis.startTime'), nameLocation: 'middle', nameGap: 34, axisLabel: { ...AXIS.axisLabel, interval: 3 } },
+      dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none', minValueSpan: Math.min(5, stops.length) }],
       visualMap: {
-        min: Math.min(...flat),
-        max: Math.max(...flat),
+        min: Math.min(...flat) === Math.max(...flat) ? Math.min(...flat) - 0.5 : Math.min(...flat),
+        max: Math.min(...flat) === Math.max(...flat) ? Math.max(...flat) + 0.5 : Math.max(...flat),
         precision: 1,
         orient: 'horizontal',
         left: 'center',
         bottom: 0,
         itemHeight: 120,
+        formatter: (value: number) => `${value.toFixed(1)} ${t('unit.min')}`,
         textStyle: { color: cssVar('--color-text3', '#8794a6'), fontSize: 10 },
         inRange: { color: [cssVar('--color-accent', '#4d8df0'), cssVar('--color-sev-warn', '#e0a02e'), cssVar('--color-sev-crit', '#ee5f63')] },
       },
-      series: [{ type: 'heatmap', data: m.flatMap((row, b) => row.map((v, i) => [i, b, v])) }],
+      series: [{ id: 'route-day-heat', name: t('rp.axis.dev'), type: 'heatmap', data: m.flatMap((row, b) => row.map((v, i) => [i, b, v])) }],
     };
   }, [mode, base, route, dir, dow, view.rows, theme]);
 
@@ -356,19 +387,21 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
     };
   }, [mode, heatOption]);
 
-  const columns: Column<Row>[] = [
-    { key: 'stop', label: t('rp.col.stop') },
-    { key: 'planned_s', label: t('rp.col.planned'), mono: true, render: (r) => hhmm(r.planned_s) },
-    { key: 'norm', label: t('rp.col.norm'), num: true, render: (r) => `${(r.norm / 60).toFixed(1)} ± ${(r.half / 60).toFixed(1)}` },
-    { key: 'actual', label: t('rp.col.actual'), num: true, render: (r) => (r.actual === null ? EM_DASH : (r.actual / 60).toFixed(1)) },
-    {
-      key: 'delta',
-      label: t('rp.col.delta'),
-      num: true,
-      render: (r) => (r.actual === null ? EM_DASH : `${r.actual >= r.norm ? '+' : ''}${((r.actual - r.norm) / 60).toFixed(1)}`),
-    },
-    { key: 'seg', label: t('rp.col.segment') },
-  ];
+  useEffect(() => {
+    if (mode !== 'trip') return;
+    const el = tripRef.current?.firstElementChild as HTMLElement | null;
+    const inst = el ? getInstanceByDom(el) : undefined;
+    if (!inst) return;
+    const onClick = (p: { dataIndex?: number; componentType?: string }) => {
+      if (p.componentType !== 'series' || p.dataIndex === undefined) return;
+      const row = forecastRows[p.dataIndex];
+      if (row) setSelectedK(row.k);
+    };
+    inst.on('click', onClick);
+    return () => {
+      inst.off('click', onClick);
+    };
+  }, [mode, option, forecastRows]);
 
   const startLabel = hhmm(bucketStartS(bucket));
   const note = view.bus
@@ -378,29 +411,41 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
       : t('rp.noLive', { route: routeId, time: startLabel });
 
   // ---- insight strip
-  const lastStop = view.rows.at(-1)!.stop;
   const tone = (s: number) => (s > 60 ? 'var(--color-sev-warn)' : s < -60 ? 'var(--color-accent)' : 'var(--color-sev-ok)');
   const segLabel = ins.worstSeg ? segmentName(ins.worstSeg.key, lang) : '';
-  const tk = ins.end.mean > 60 && ins.worstSeg ? 'rp.take.late' : ins.end.mean < -60 ? 'rp.take.early' : 'rp.take.onTime';
-  const takeaway = t(tk, { dow: dayName, time: startLabel, stop: lastStop, m: m1(Math.abs(ins.end.mean)), seg: segLabel });
   const cmpSentence =
     ins.diff === null
       ? ''
       : t(Math.abs(ins.diff) < 3 ? 'rp.ins.same' : ins.diff > 0 ? 'rp.ins.worse' : 'rp.ins.better', { a: dayName, b: cmpName, d: m1(Math.abs(ins.diff)) });
   // quick compare: the busiest weekday and the quietest day, never the day already shown
   const quick = [FRI, SUN, MON].filter((d) => d !== dow).slice(0, 2);
-  const planMin = ins.plannedS / 60;
+  const planMin = tripForecast.plannedDurationS / 60;
+  const onset = forecastRows.find((r) => r.state === 'delay' || r.state === 'significant') ?? null;
+  const selected = forecastRows.find((r) => r.k === selectedK) ?? null;
+  const forecastEnd = forecastRows.at(-1)?.forecastDeviationS ?? 0;
+  const forecastPct = planMin ? (tripForecast.forecastDurationS - tripForecast.plannedDurationS) / tripForecast.plannedDurationS : 0;
+  const needsReview = forecastRows.some((r) => r.state === 'significant');
+  const stateTone = (state: RouteForecastStop['state']): 'ok' | 'warn' | 'crit' | 'info' =>
+    state === 'significant' ? 'crit' : state === 'delay' ? 'warn' : state === 'recovery' ? 'info' : 'ok';
+  const evidence = tripForecast.evidence;
+  const openHotspots = () => {
+    const q = new URLSearchParams({ tab: 'hotspots', route: routeId, dow: String(dow), start: String(bucket) });
+    location.hash = `#/analytics?${q.toString()}`;
+  };
 
   return (
+    <div data-route-profile>
     <Panel titleKey="rp.title" sub={t('rp.sub')} bodyClassName="flex flex-col gap-2 p-2">
       <div className="flex flex-wrap items-end gap-2">
+        <div data-route-select>
         <Select
           label={t('rp.route')}
           value={routeId}
           onChange={setRouteId}
           options={routes.map((r) => ({ value: r.route_id, label: `${r.route_id} · ${lang === 'mn' ? r.name_mn : r.name_en}` }))}
         />
-        <Select
+        </div>
+        <div><Select
           label={t('rp.dir')}
           value={String(dir) as '0' | '1'}
           onChange={(v) => setDir(v === '1' ? 1 : 0)}
@@ -408,19 +453,19 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
             { value: '0', label: t('rp.dir0') },
             { value: '1', label: t('rp.dir1') },
           ]}
-        />
-        <Select
+        /></div>
+        <div data-route-day><Select
           label={t('rp.dow')}
           value={String(dow)}
           onChange={(v) => setDow(+v)}
           options={[0, 1, 2, 3, 4, 5, 6].map((d) => ({ value: String(d), label: t(`dow.${d}` as I18nKey) }))}
-        />
-        <Select
+        /></div>
+        <div data-route-start><Select
           label={t('rp.start')}
           value={String(bucket)}
           onChange={(v) => setBucket(+v)}
           options={Array.from({ length: BUCKETS }, (_, b) => ({ value: String(b), label: hhmm(bucketStartS(b)) }))}
-        />
+        /></div>
         <Select
           label={t('rp.compare')}
           value={cmp === null ? '' : String(cmp)}
@@ -442,17 +487,28 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
       <p className="t-meta" data-route-profile-note>
         {mode === 'heat' ? t('rp.heat.hint', { dow: dayName }) : note}
       </p>
+      {mode === 'trip' ? (
+        <p className="t-meta" data-route-forecast-evidence>
+          {t('rp.evidence', {
+            method: evidence.methodology,
+            weeks: evidence.baselineWeeks,
+            coverage: Math.round(evidence.liveSegmentCoverage * 100),
+          })}
+        </p>
+      ) : null}
       {mode === 'heat' && heatOption ? (
         <div key="heat" className="shrink-0" style={{ height: 520 }} data-route-profile-heatmap ref={heatRef}>
-          <EChart option={heatOption} />
+          <EChart option={heatOption} ariaLabel={`${routeId} ${dayName} ${t('rp.axis.dev')} · ${t('chart.axis.startTime')} × ${t('chart.axis.stop')}`} />
         </div>
+      ) : mode === 'heat' ? (
+        <div className="h-[320px]"><Empty title={t('rp.ins.segNone')} text={t('rp.heat.hint', { dow: dayName })} /></div>
       ) : (
         <>
           <div className="grid shrink-0 grid-cols-2 gap-2 xl:grid-cols-4" data-route-profile-insights>
             <Tile
               label={t('rp.ins.end')}
-              value={`${sgn(ins.end.mean)} min`}
-              tone={tone(ins.end.mean)}
+              value={`${sgn(forecastEnd)} ${t('unit.min')}`}
+              tone={tone(forecastEnd)}
               sub={t('rp.ins.endSub', { dow: dayName, time: startLabel, lo: m1(ins.end.p10), hi: m1(ins.end.p90) })}
             />
             {ins.diff !== null && ins.endCmp ? (
@@ -486,20 +542,96 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
             />
             <Tile
               label={t('rp.ins.dur')}
-              value={t('rp.ins.durVal', { act: (planMin + ins.end.mean / 60).toFixed(0), plan: planMin.toFixed(0) })}
-              tone={tone(ins.end.mean)}
-              sub={t('rp.ins.durSub', { pct: `${ins.pct >= 0 ? '+' : ''}${(ins.pct * 100).toFixed(1)}` })}
+              value={t('rp.ins.durVal', { act: (tripForecast.forecastDurationS / 60).toFixed(0), plan: planMin.toFixed(0) })}
+              tone={tone(forecastEnd)}
+              sub={t('rp.ins.durSub', { pct: `${forecastPct >= 0 ? '+' : ''}${(forecastPct * 100).toFixed(1)}` })}
             />
           </div>
           <p className="t-body text-[var(--color-text2)]" data-route-profile-takeaway>
-            {takeaway} {cmpSentence ? `${cmpSentence}.` : ''}
+            {t('rp.forecast.summary', { end: sgn(forecastEnd), norm: sgn(ins.end.mean), comparison: cmpSentence ? `${cmpSentence}.` : '' })}
           </p>
-          <div key="trip" className="shrink-0" style={{ height: 500 }} data-route-profile-chart>
-            <EChart option={option} />
+          <div className="flex flex-wrap items-center gap-2 rounded border border-[var(--color-line)] bg-[var(--color-bg2)] px-3 py-2" data-route-state-legend>
+            <span className="t-label mr-1">{t('rp.legend.states')}</span>
+            {(['within_norm', 'delay', 'significant', 'recovery'] as const).map((state) => (
+              <StatusPill key={state} tone={stateTone(state)}>{t(`rp.state.${state}` as I18nKey)}</StatusPill>
+            ))}
+            <span className="t-body ml-auto text-[var(--color-text2)]" data-route-deviation-onset>
+              {onset
+                ? t('rp.onset', { stop: onset.stop, time: hhmm(onset.forecastArrivalS), dev: m1(onset.forecastDeviationS) })
+                : t('rp.onset.none')}
+            </span>
+          </div>
+          <p className="t-meta rounded border border-dashed border-[var(--color-line)] px-3 py-2">{t('rp.modelDisclaimer')}</p>
+          <div key="trip" ref={tripRef} className="shrink-0" style={{ height: 500 }} data-route-profile-chart>
+            <EChart option={option} ariaLabel={`${routeId} · ${dayName} ${startLabel} · ${t('rp.axis.dev')} / ${t('rp.axis.stop')}`} />
+          </div>
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.45fr)]">
+            <div className="rounded border border-[var(--color-line)] bg-[var(--color-bg2)] p-3" data-route-stop-detail>
+              <div className="t-label">{t('rp.detail.title')}</div>
+              {selected ? (
+                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  <Tile label={t('rp.col.stop')} value={selected.stop} text sub={selected.seg} />
+                  <Tile label={t('rp.col.forecastArrival')} value={hhmm(selected.forecastArrivalS)} sub={`${t('rp.col.scheduledArrival')}: ${hhmm(selected.scheduledArrivalS)}`} />
+                  <Tile label={t('rp.col.normArrival')} value={hhmm(selected.normArrivalS)} sub={`${sgn(selected.normDeviationS)} ${t('unit.min')}`} />
+                  <Tile label={t('rp.detail.segmentGain')} value={`${sgn(selected.hopForecastAccumulationS)} ${t('unit.min')}`} tone={tone(selected.hopForecastAccumulationS)} />
+                  <Tile label={t('rp.detail.confidence')} value={`${Math.round(selected.confidence * 100)}%`}>
+                    <StatusPill tone={stateTone(selected.state)}>{t(`rp.state.${selected.state}` as I18nKey)}</StatusPill>
+                  </Tile>
+                </div>
+              ) : <p className="t-meta mt-1">{t('rp.detail.hint')}</p>}
+            </div>
+            <div className="rounded border border-[var(--color-line)] bg-[var(--color-bg2)] p-3" data-route-operational-action>
+              <div className="t-label">{t('rp.action.title')}</div>
+              <p className="t-body mt-1 text-[var(--color-text1)]">{t(needsReview ? 'rp.action.review' : 'rp.action.monitor')}</p>
+              <p className="t-meta mt-1">
+                {t('rp.action.evidence', {
+                  state: t(`rp.state.${onset?.state ?? 'within_norm'}` as I18nKey),
+                  stop: onset?.stop ?? forecastRows[0]?.stop ?? EM_DASH,
+                  end: m1(forecastEnd),
+                  confidence: Math.round(tripForecast.confidence * 100),
+                })}
+              </p>
+              <Button size="sm" className="mt-2" onClick={openHotspots}>{t('rp.action.openHotspots')}</Button>
+            </div>
           </div>
         </>
       )}
-      <DataTable columns={columns} rows={view.rows} rowKey={(r) => String(r.k)} compact maxHeight={240} />
+      <div className="max-h-[280px] overflow-auto rounded border border-[var(--color-line)]" data-route-stop-table>
+        <table className="t-body w-full min-w-[1050px]">
+          <thead className="sticky top-0 bg-[var(--color-bg1)]" style={{ zIndex: 'var(--z-sticky)' }}>
+            <tr>{[
+              t('rp.col.stop'), t('rp.col.scheduledArrival'), t('rp.col.normArrival'), t('rp.col.forecastArrival'),
+              t('rp.col.forecastDev'), t('rp.col.cumulative'), t('rp.col.state'), t('rp.col.segment'),
+            ].map((label) => <th key={label} scope="col" className="t-label px-2 py-1 text-left">{label}</th>)}</tr>
+          </thead>
+          <tbody>
+            {forecastRows.map((r) => (
+              <tr
+                key={r.k}
+                role="button"
+                tabIndex={0}
+                data-route-stop-row
+                data-stop-index={r.k}
+                data-deviation-state={r.state}
+                aria-pressed={selectedK === r.k}
+                onClick={() => setSelectedK(r.k)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedK(r.k); } }}
+                className={`cursor-pointer border-t border-[var(--color-line)] hover:bg-[var(--color-bg2)] ${selectedK === r.k ? 'bg-[var(--color-bg3)]' : ''}`}
+              >
+                <td className="px-2 py-1 font-medium">{r.stop}</td>
+                <td className="num px-2 py-1" data-scheduled-arrival>{hhmm(r.scheduledArrivalS)}</td>
+                <td className="num px-2 py-1" data-norm-arrival>{hhmm(r.normArrivalS)}</td>
+                <td className="num px-2 py-1" data-forecast-arrival>{hhmm(r.forecastArrivalS)}</td>
+                <td className="num px-2 py-1" data-forecast-deviation>{sgn(r.forecastDeviationS)} {t('unit.min')}</td>
+                <td className="num px-2 py-1" data-cumulative-deviation>{sgn(r.cumulativeForecastDeviationS)} {t('unit.min')}</td>
+                <td className="px-2 py-1"><StatusPill tone={stateTone(r.state)}>{t(`rp.state.${r.state}` as I18nKey)}</StatusPill></td>
+                <td className="px-2 py-1">{r.seg}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Panel>
+    </div>
   );
 }

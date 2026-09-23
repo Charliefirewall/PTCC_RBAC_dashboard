@@ -126,6 +126,17 @@
   font-size: 10px;
 }
 
+.ptcc-pop-direction {
+  max-width: 20rem;
+  color: var(--color-text2);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.ptcc-hover-popup .maplibregl-popup-content {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-line));
+}
+
 .ptcc-pop-rows {
   display: flex;
   flex-direction: column;

@@ -56,6 +56,9 @@ export function DataTable<R>({
   rowClass,
   empty,
   foot,
+  caption,
+  accessibleName,
+  minWidth,
   className = '',
 }: {
   columns: Column<R>[];
@@ -76,6 +79,12 @@ export function DataTable<R>({
   empty?: { title: string; text?: string };
   /** `<tr>`s for the `<tfoot>` - a total line that must not be sorted or paged away. */
   foot?: ReactNode;
+  /** Visible or visually-hidden context for screen-reader table navigation. */
+  caption?: ReactNode;
+  /** Use when a visible caption would duplicate the surrounding panel title. */
+  accessibleName?: string;
+  /** Keeps dense operational columns readable; the labelled wrapper then scrolls. */
+  minWidth?: number | string;
   className?: string;
 }) {
   const t = useT();
@@ -112,8 +121,15 @@ export function DataTable<R>({
       {/* Only becomes a scroll container when a maxHeight is given. Otherwise the
           enclosing Panel body is the scroller, and the sticky header must stick against
           THAT - an unconditional overflow-auto here would silently break it. */}
-      <div className={maxHeight ? 'min-h-0 flex-1 overflow-auto' : 'min-h-0'} style={maxHeight ? { maxHeight } : undefined}>
-        <table className="t-body w-full">
+      <div
+        className={maxHeight || minWidth ? 'min-h-0 flex-1 overflow-auto' : 'min-h-0'}
+        style={maxHeight ? { maxHeight } : undefined}
+        tabIndex={minWidth ? 0 : undefined}
+        role={minWidth ? 'region' : undefined}
+        aria-label={minWidth ? accessibleName : undefined}
+      >
+        <table className="t-body w-full" aria-label={accessibleName} style={minWidth ? { minWidth } : undefined}>
+          {caption ? <caption className="p-2 text-left t-meta">{caption}</caption> : null}
           <thead className="sticky top-0 bg-[var(--color-bg1)]" style={{ zIndex: 'var(--z-sticky)' }}>
             <tr>
               {columns.map((c) => {
@@ -167,10 +183,8 @@ export function DataTable<R>({
                 return (
                   <tr
                     key={rowKey ? rowKey(r, i) : i}
-                    // A row is a button when it does something. Same semantics for both
-                    // input devices; `title` is deliberately absent - the row's own text
-                    // is its label.
-                    role={activate ? 'button' : undefined}
+                    // Keep native table-row semantics while offering the same activation
+                    // path to pointer and keyboard users. The row's cells remain its label.
                     tabIndex={activate ? 0 : undefined}
                     onClick={
                       activate

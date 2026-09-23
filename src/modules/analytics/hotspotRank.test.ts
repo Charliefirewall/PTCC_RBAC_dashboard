@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRoutes } from '../../data/build';
 import { segmentCentrality } from '../../data/segments';
 import { buildBaseline } from '../../sim/baseline';
-import { draftFor, hotspotAction, LIVE_OVER_NORM_S_PER_KM, rankHotspots } from './hotspotRank';
+import { analyzeHotspots, draftFor, hotspotAction, hotspotActionDecision, LIVE_OVER_NORM_S_PER_KM, rankHotspots } from './hotspotRank';
 
 const SEED = 20260921;
 const routes = buildRoutes(SEED).filter((r) => r.active);
@@ -22,6 +22,52 @@ describe('top-5 delay hotspots (3b)', () => {
     expect(rankHotspots(buildBaseline(SEED, routes), routes, 0, 'pm')).toEqual(rankHotspots(base, routes, 0, 'pm'));
   });
 
+  it('exposes transparent synthetic historical metrics and contribution across all eligible segments', () => {
+    const analysis = analyzeHotspots(base, routes, { dow: 0, window: 'am' });
+    expect(analysis.hotspots).toHaveLength(5);
+    expect(analysis.assumptions.join(' ')).toMatch(/synthetic|estimate/i);
+    for (const h of analysis.hotspots) {
+      expect(h.evidence).toBe('synthetic_demo');
+      expect(h.baseline_weeks).toBe(8);
+      expect(h.delay_frequency_pct).toBeGreaterThanOrEqual(0);
+      expect(h.delay_frequency_pct).toBeLessThanOrEqual(100);
+      expect(h.affected_buses_est).toBeGreaterThanOrEqual(0);
+      expect(h.affected_buses_pct).toBeCloseTo(h.delay_frequency_pct);
+      expect(h.recurrence_pct).toBeGreaterThanOrEqual(0);
+      expect(h.recurrence_pct).toBeLessThanOrEqual(100);
+      expect(h.most_affected_days).toHaveLength(2);
+      expect(h.most_affected_windows).toHaveLength(2);
+      expect(h.historical_trend).toBe('not_available_stationary_demo');
+      expect(h.contribution_pct).toBeGreaterThan(0);
+      expect(h.recommendation_evidence.contribution_pct).toBe(h.contribution_pct);
+    }
+    // Denominator includes non-top-five segments, so displayed shares need not sum to 100.
+    expect(analysis.hotspots.reduce((s, h) => s + h.contribution_pct, 0)).toBeLessThanOrEqual(100);
+  });
+
+  it('supports route, day and exact-start context with an upcoming-trip risk', () => {
+    const route = routes.find((r) => (r.edges?.length ?? 0) >= 5)!;
+    const a = analyzeHotspots(base, routes, { dow: 4, window: 'pm', startBucket: 47, routeId: route.route_id });
+    expect(a.context).toEqual({ dow: 4, window: 'pm', startBucket: 47, routeId: route.route_id });
+    expect(a.hotspots.length).toBeGreaterThan(0);
+    for (const h of a.hotspots) {
+      expect(h.routes).toEqual([route.route_id]);
+      expect(h.upcoming_risk.route_id).toBe(route.route_id);
+      expect(h.upcoming_risk.start_bucket).toBe(47);
+      expect(h.upcoming_risk.score).toBeGreaterThanOrEqual(0);
+      expect(h.upcoming_risk.score).toBeLessThanOrEqual(100);
+      expect(h.recommendation_evidence.selected_start_bucket).toBe(47);
+      expect(h.recommendation_evidence.selected_route_id).toBe(route.route_id);
+    }
+    expect(analyzeHotspots(base, routes, { dow: 4, window: 'pm', startBucket: 47, routeId: route.route_id })).toEqual(a);
+  });
+
+  it('returns no candidates for an unknown route instead of silently claiming network evidence', () => {
+    const a = analyzeHotspots(base, routes, { dow: 0, window: 'all', startBucket: 8, routeId: 'UNKNOWN' });
+    expect(a.hotspots).toEqual([]);
+    expect(a.context.routeId).toBeNull();
+  });
+
   it('weekend AM peak loses less than weekday AM peak', () => {
     expect(total(5)).toBeLessThan(total(0));
     expect(total(6)).toBeLessThan(total(2));
@@ -32,6 +78,19 @@ describe('top-5 delay hotspots (3b)', () => {
     const central = base.segKeys.find((k) => segmentCentrality(k) === 2)!;
     expect(hotspotAction(central, 'am', LIVE_OVER_NORM_S_PER_KM - 1)).toBe('hs.act.signal_priority');
     expect(hotspotAction(central, 'midday', null)).toBe('hs.act.stop_spacing');
+  });
+
+  it('makes the fixed live-margin trigger and rationale machine-readable', () => {
+    const key = base.segKeys[0]!;
+    const atThreshold = hotspotActionDecision(key, 'am', LIVE_OVER_NORM_S_PER_KM);
+    expect(atThreshold.trigger).not.toBe('live_margin_exceeded');
+    const exceeded = hotspotActionDecision(key, 'am', LIVE_OVER_NORM_S_PER_KM + 0.1);
+    expect(exceeded).toMatchObject({
+      action: 'hs.act.tcc_notify',
+      trigger: 'live_margin_exceeded',
+      threshold_s_per_km: LIVE_OVER_NORM_S_PER_KM,
+    });
+    expect(exceeded.rationale).toContainEqual({ key: 'trigger_margin_s_per_km', value: LIVE_OVER_NORM_S_PER_KM });
   });
 });
 

@@ -15,13 +15,14 @@ import type {
   EmergencyEvent,
   EventCategory,
   EventSeverity,
+  HistoricalAlertRecord,
   Lang,
   PassengerMessage,
   RoleId,
   SimSnapshot,
   WorkflowStage,
 } from '../sim/types';
-import { WORKFLOW_STAGES } from '../sim/types';
+import { tripIdOf, WORKFLOW_STAGES } from '../sim/types';
 import { deriveMetrics, evaluateRules, makeHysteresis, type DerivedMetrics } from '../rules/evaluate';
 import {
   buildActions,
@@ -80,14 +81,67 @@ export const useSim = create<SimState>(() => ({
 
 interface AlertState {
   alerts: Alert[];
+  history: HistoricalAlertRecord[];
   acknowledge: (id: string) => void;
 }
 
 export const useAlerts = create<AlertState>((set) => ({
   alerts: [],
+  history: [],
   acknowledge: (id) =>
     set((s) => ({ alerts: s.alerts.map((a) => (a.id === id ? { ...a, acknowledged: true } : a)) })),
 }));
+
+/** Retain the last observed operational state when an actual alert clears. */
+function commitAlerts(alerts: Alert[], now_s: number): void {
+  const state = useAlerts.getState();
+  const liveIds = new Set(alerts.map((a) => a.id));
+  const alreadyArchived = new Set(state.history.map((r) => `${r.alert.id}:${r.alert.raised_at_s}`));
+  const cleared = state.alerts.filter(
+    (a) => !a.forecast && !liveIds.has(a.id) && !alreadyArchived.has(`${a.id}:${a.raised_at_s}`),
+  );
+  const resolved_at = isoAt(now_s);
+  const records: HistoricalAlertRecord[] = cleared.map((alert) => {
+    const v = alert.vehicle_id ? world.vehicleById.get(alert.vehicle_id) : undefined;
+    const trip_id = v ? tripIdOf(v) : '';
+    const forecasts = ([15, 30, 45, 60] as const).flatMap((h) => {
+      const f = useForecast.getState().byHorizon[h].find(
+        (x) => x.route_id === alert.route_id && (!alert.vehicle_id || x.vehicle_id === alert.vehicle_id || x.params.bus === alert.vehicle_id),
+      );
+      return f
+        ? [{
+            horizon_min: h,
+            probability: f.probability ?? 0,
+            confidence: f.confidence ?? 0,
+            expected_deviation_s: Number(f.metric.value) || 0,
+          }]
+        : [];
+    });
+    return {
+      alert: { ...alert },
+      resolved_at,
+      resolved_at_s: now_s,
+      vehicle: v
+        ? {
+            vehicle_id: v.vehicle_id,
+            route_id: v.route_id,
+            driver_id: v.driver_id,
+            latitude: v.latitude,
+            longitude: v.longitude,
+            speed_kmh: v.speed,
+            schedule_deviation_s: v.schedule_deviation,
+            passenger_load_pct: v.capacity > 0 ? (v.pax_count / v.capacity) * 100 : 0,
+            trip_id,
+            trip_progress: v.trip_progress,
+            next_stop_id: v.next_stop_id,
+          }
+        : undefined,
+      stops: trip_id ? [...(world.tripLog.get(trip_id) ?? [])] : [],
+      forecasts,
+    };
+  });
+  useAlerts.setState({ alerts, history: [...records, ...state.history].slice(0, 1000) });
+}
 
 // ---------------------------------------------------------------- settings
 
@@ -446,6 +500,13 @@ interface CommsState {
   sendSystemCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'auto' | 'status'>): CoordinationMessage;
   /** L3 SOP: the system prepares, a person sends. */
   draftCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'status'>): CoordinationMessage;
+  /** Analytics: a permitted operator proposes a traceable action; this is never an L3 event by itself. */
+  draftProactiveCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'status' | 'provenance' | 'intent'>): CoordinationMessage | undefined;
+  /** Analytics: an Incident Manager requests senior/TCC review without relabelling a forecast as an actual L3. */
+  requestAnalyticsEscalation(
+    m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'status' | 'provenance' | 'intent' | 'recipient' | 'message_type' | 'channel'>
+      & Required<Pick<CoordinationMessage, 'reason' | 'evidence'>>,
+  ): CoordinationMessage | undefined;
   sendDraft(communication_id: string, by: string): boolean;
   revoke(communication_id: string, by: string): boolean;
 }
@@ -527,7 +588,58 @@ export const useComms = create<CommsState>((set) => ({
       status: 'draft',
     };
     set((s) => ({ coordination: [msg, ...s.coordination] }));
-    audit('auto_draft_l3', m.alert_id ?? msg.communication_id, 'system', `${msg.communication_id} -> ${m.recipient}`);
+    audit(
+      m.intent === 'actual_l3_escalation' ? 'auto_draft_l3' : 'coordination_draft',
+      m.alert_id ?? msg.communication_id,
+      m.intent === 'actual_l3_escalation' ? 'system' : m.operator,
+      `${msg.communication_id} -> ${m.recipient}`,
+    );
+    return msg;
+  },
+  draftProactiveCoordination: (m) => {
+    const role = useSettings.getState().role;
+    if (!can(role, 'send_coordination')) return;
+    const msg: CoordinationMessage = {
+      ...m,
+      communication_id: `CM-${String(++msgSeq).padStart(4, '0')}`,
+      sent_at: isoAt(world.sim_time_s),
+      status: 'draft',
+      provenance: 'analytics_proactive',
+      intent: 'proactive_proposal',
+      // R967: a TCC proposal is handed off to a person and uses the manual channel.
+      channel: m.recipient === 'tcc' ? 'manual (telephone)' : m.channel,
+    };
+    set((s) => ({ coordination: [msg, ...s.coordination] }));
+    audit(
+      'proactive_coordination_proposed',
+      msg.communication_id,
+      m.operator,
+      `${m.recipient} · ${m.context?.segment_id ?? m.context?.route_id ?? 'analytics'} · ${m.reason ?? 'evidence attached'}`,
+    );
+    return msg;
+  },
+  requestAnalyticsEscalation: (m) => {
+    const role = useSettings.getState().role;
+    if (!can(role, 'escalate_l3') || !can(role, 'send_coordination')) return;
+    if (!m.reason.trim() || m.evidence.length === 0) return;
+    const msg: CoordinationMessage = {
+      ...m,
+      communication_id: `CM-${String(++msgSeq).padStart(4, '0')}`,
+      sent_at: isoAt(world.sim_time_s),
+      status: 'draft',
+      provenance: 'analytics_proactive',
+      intent: 'escalation_request',
+      recipient: 'tcc',
+      message_type: 'coordination_request',
+      channel: 'manual (telephone)',
+    };
+    set((s) => ({ coordination: [msg, ...s.coordination] }));
+    audit(
+      'analytics_escalation_requested',
+      msg.communication_id,
+      m.operator,
+      `${m.context?.segment_id ?? m.context?.route_id ?? 'analytics'} · ${m.reason}`,
+    );
     return msg;
   },
   sendDraft: (id, by) => {
@@ -626,7 +738,7 @@ export function reevaluate(): void {
   // thresholds or the baseline day changed: the forecast must follow immediately
   maybeForecast(world, metrics, th, useSettings.getState().dow, alerts, true);
   useSim.setState({ metrics });
-  useAlerts.setState({ alerts });
+  commitAlerts(alerts, snap.sim_time_s);
 }
 
 export function startBridge(): () => void {
@@ -650,7 +762,7 @@ export function startBridge(): () => void {
     }
 
     useSim.setState((s) => ({ snap, metrics, tick: s.tick + 1, running: engine.isRunning(), speed: engine.speed }));
-    useAlerts.setState({ alerts });
+    commitAlerts(alerts, snap.sim_time_s);
   });
 }
 

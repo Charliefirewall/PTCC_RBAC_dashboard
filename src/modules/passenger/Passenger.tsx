@@ -65,6 +65,7 @@ export default function Passenger() {
   const snap = useSim((s) => s.snap);
   const metrics = useSim((s) => s.metrics);
   const th = useSettings((s) => s.th);
+  const theme = useSettings((s) => s.theme);
   const selectedRoute = useSelection((s) => s.route_id);
   const selectRoute = useSelection((s) => s.selectRoute);
 
@@ -102,13 +103,24 @@ export default function Passenger() {
    * CSS-variable themer own those, which is exactly what makes the light theme right.
    */
   const chartOption = useMemo(
-    () => ({
+    () => {
+      const peak = Math.max(100, ...heat.map((r) => Number.isFinite(r.load_pct) ? r.load_pct : 0));
+      const scaleMax = Math.ceil(peak / 10) * 10;
+      return ({
       ...CHART_BASE,
-      grid: { ...CHART_BASE.grid, left: 48, right: 24, top: 8, bottom: 22 },
-      xAxis: { ...AXIS, type: 'value', max: 100, name: '%' },
-      yAxis: { ...AXIS, type: 'category', inverse: true, data: heat.map((r) => r.route_id) },
+      grid: { ...CHART_BASE.grid, left: 8, right: 24, top: 8, bottom: 8 },
+      tooltip: {
+        ...CHART_BASE.tooltip,
+        trigger: 'item' as const,
+        formatter: (p: { dataIndex: number; value: number }) =>
+          `<b>${t('chart.tooltip.route', { route: heat[p.dataIndex]?.route_id ?? '—' })}</b><br/>${t('chart.series.load')}: ${Math.round(p.value)} %`,
+      },
+      xAxis: { ...AXIS, type: 'value', min: 0, max: scaleMax, name: t('chart.axis.loadPct'), nameLocation: 'middle' as const, nameGap: 24 },
+      yAxis: { ...AXIS, type: 'category', inverse: true, data: heat.map((r) => r.route_id), name: t('chart.axis.route'), nameLocation: 'end' as const, nameGap: 6 },
       series: [
         {
+          id: 'route-load',
+          name: t('chart.series.load'),
           type: 'bar',
           // A non-finite load is drawn as a missing bar (null), never as a zero-height
           // bar that reads as "this route is empty".
@@ -117,10 +129,17 @@ export default function Passenger() {
             itemStyle: { color: bandColor(bandOf(r.load_pct)) },
           })),
           barMaxWidth: 12,
+          markLine: {
+            silent: true,
+            symbol: 'none',
+            lineStyle: { color: bandColor({ token: '--color-text3' }), type: 'dashed', width: 1 },
+            label: { formatter: '100%', color: bandColor({ token: '--color-text3' }), fontSize: 9, position: 'insideEndTop' },
+            data: [{ xAxis: 100 }],
+          },
         },
       ],
-    }),
-    [heat],
+    }); },
+    [heat, t, theme],
   );
 
   /*
@@ -173,7 +192,7 @@ export default function Passenger() {
         <KpiTile labelKey="kpi.ridershipToday" value={compactOr(metrics.ridership_today)} evidence="CONFIRMED" spark={history.kpi.ridership.toArray()} />
         <KpiTile
           labelKey="pax.waiting"
-          value={waitMin === null ? EM_DASH : `${waitMin.toFixed(1)} min`}
+          value={waitMin === null ? EM_DASH : `${waitMin.toFixed(1)} ${t('unit.min')}`}
           tone={waitMin !== null && waitMin > 10 ? 'warn' : 'neutral'}
           evidence="INFERRED"
           sub={
@@ -203,6 +222,12 @@ export default function Passenger() {
         <EvidenceTag label="INFERRED" cite="R1314" className="mr-1" />
         {t('pax.waitingNote')}
       </p>
+
+      {top5[0] ? (
+        <p className="t-body shrink-0 border-l-2 border-[var(--color-accent)] pl-2 text-[var(--color-text1)]" data-passenger-insight>
+          {t('uxreg.paxInsight', { route: top5[0].route_id, load: top5[0].load_pct.toFixed(0), threshold: th.passenger_load_pct, action: top5[0].load_pct >= th.passenger_load_pct ? t('pax.action') : t('legend.normal') })}
+        </p>
+      ) : null}
 
       {/* overcrowding callouts - capped at 6, the rest shown as a bare count */}
       {/* Emptiness here is the good news on this page, so it is stated rather than
@@ -350,7 +375,7 @@ export default function Passenger() {
         {heat.length === 0 ? (
           <Empty title={t('pax.heatEmptyTitle')} text={t('pax.heatEmptyText')} />
         ) : (
-          <EChart option={chartOption} style={{ height: 300 }} />
+          <EChart option={chartOption} style={{ height: 300 }} ariaLabel={`${t('pax.demandHeat')} · ${t('chart.axis.loadPct')} by ${t('chart.axis.route')}`} />
         )}
       </Panel>
     </div>

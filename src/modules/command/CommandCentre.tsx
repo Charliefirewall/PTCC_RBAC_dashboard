@@ -296,40 +296,47 @@ function NextHour() {
   const byH = useForecast((s) => s.byHorizon);
   return (
     <a
-      href="#/alerts"
+      href="#/forecast"
       data-next-hour=""
-      className="panel flex shrink-0 flex-col gap-1 border-l-4 border-l-[var(--color-forecast)] px-3 py-1 hover:bg-[var(--color-bg2)]"
+      className="panel flex min-h-[176px] shrink-0 flex-col gap-2 border-l-4 border-l-[var(--color-forecast)] px-3 py-2 hover:bg-[var(--color-bg2)]"
     >
       <div className="flex min-w-0 items-baseline justify-between gap-2">
         <span className="panel-title shrink-0 text-[var(--color-forecast)]">{t('cc.nextHour')}</span>
         <span className="t-meta truncate">{t('uxcc.nextHourLegend')}</span>
       </div>
-      <div className="grid grid-cols-4 gap-1.5">
+      <div className="grid min-h-0 flex-1 grid-cols-2 gap-1.5">
         {HORIZONS.map((h) => {
           const rows = byH[h].filter((a) => a.route_id);
           const top = rows.reduce((m, a) => Math.max(m, a.level), 0);
+          const lead = rows[0];
           return (
             <span
               key={h}
               title={rows.length ? t('cc.nextHourRow', { n: rows.length, level: top }) : t('cc.nextHourNone')}
-              className="flex min-w-0 items-center justify-between gap-1 rounded bg-[var(--color-bg2)] px-2 py-0.5"
+              className="flex min-h-[58px] min-w-0 flex-col justify-center gap-0.5 rounded bg-[var(--color-bg2)] px-2 py-1"
             >
-              <span className="num text-[10px] text-[var(--color-forecast)]">+{h === 60 ? '1h' : `${h}m`}</span>
-              <span
-                className="num text-[13px] font-semibold"
-                style={{ color: rows.length ? 'var(--color-text1)' : 'var(--color-text3)' }}
-              >
-                {rows.length}
+              <span className="flex w-full items-center justify-between gap-1">
+                <span className="num text-[10px] text-[var(--color-forecast)]">+{h === 60 ? '1h' : `${h}m`}</span>
+                <span className="num min-w-0 flex-1 break-words text-center text-[10px] font-semibold leading-tight">
+                  {lead?.route_id ?? t('cc.nextHourNone')}
+                </span>
+                {top >= 1 && top <= 3 ? <LevelBadge level={top as 1 | 2 | 3} forecast /> : null}
               </span>
-              {top >= 1 && top <= 3 ? (
-                <LevelBadge level={top as 1 | 2 | 3} forecast />
-              ) : (
-                <span className="num inline-flex h-5 items-center text-[10px] text-[var(--color-text3)]">{DASH}</span>
-              )}
+              {lead ? (
+                <>
+                  <span className="t-meta w-full truncate">
+                    {t('uxcc.forecastExpected', { min: lead.metric.value, chance: Math.round(lead.probability * 100) })}
+                  </span>
+                  <span className="t-meta w-full truncate">
+                    {t('uxcc.forecastImpact', { pax: lead.pax_affected, confidence: Math.round(lead.confidence * 100) })}
+                  </span>
+                </>
+              ) : null}
             </span>
           );
         })}
       </div>
+      <span className="t-meta text-right text-[var(--color-forecast)]">{t('uxcc.forecastReview')} →</span>
     </a>
   );
 }
@@ -432,7 +439,7 @@ function MostDelayed({ metrics, wall }: { metrics: DerivedMetrics; wall: boolean
       titleKey="widget.mostDelayed"
       bodyClassName={`px-2 py-1.5 ${wall ? '!overflow-hidden' : ''}`}
       collapsible={!wall}
-      summary={rows[0] ? `${rows[0].route_id} +${num(rows[0].mean_dev_s / 60, (x) => x.toFixed(1))} min` : t('cc.emptyDelayed')}
+      summary={rows[0] ? `${rows[0].route_id} +${num(rows[0].mean_dev_s / 60, (x) => x.toFixed(1))} ${t('unit.min')}` : t('cc.emptyDelayed')}
       /* Empty, the panel gives its whole body to the empty state. These three bottom-row
          panels are ~140px tall: `sub` + `foot` leave 48px, which clips a two-line Empty
          mid-sentence and lets its title collide with the sub. The empty state SAYS what
@@ -464,7 +471,7 @@ function MostDelayed({ metrics, wall }: { metrics: DerivedMetrics; wall: boolean
                     {r.route_id}
                   </span>
                   <span className="num shrink-0 font-semibold" style={{ color }}>
-                    {num(r.mean_dev_s / 60, (x) => x.toFixed(1))} min
+                    {num(r.mean_dev_s / 60, (x) => x.toFixed(1))} {t('unit.min')}
                   </span>
                 </div>
                 <Bar pct={(fin(r.mean_dev_s) / max) * 100} color={color} height={wall ? 8 : 5} />
@@ -570,10 +577,31 @@ function OperatorOnTime({ metrics, wall }: { metrics: DerivedMetrics; wall: bool
   const option = useMemo(
     () => ({
       ...CHART_BASE,
-      grid: { left: 28, right: 30, top: 8, bottom: 18, containLabel: false },
-      tooltip: { ...CHART_BASE.tooltip, trigger: 'item' as const },
-      xAxis: { type: 'value' as const, max: 100, ...AXIS, splitLine: { show: false } },
-      yAxis: { type: 'category' as const, inverse: true, data: rows.map((r) => r.op), ...AXIS },
+      grid: { ...CHART_BASE.grid, left: 8, right: 20, top: 8, bottom: 6 },
+      tooltip: {
+        ...CHART_BASE.tooltip,
+        trigger: 'item' as const,
+        formatter: (p: { dataIndex: number; value: number }) =>
+          `<b>${t('chart.tooltip.operator', { operator: rows[p.dataIndex]?.op ?? DASH })}</b><br/>${t('widget.onTime')}: ${Number(p.value).toFixed(1)} %`,
+      },
+      xAxis: {
+        ...AXIS,
+        type: 'value' as const,
+        max: 100,
+        name: t('chart.axis.onTimePct'),
+        nameLocation: 'middle' as const,
+        nameGap: 23,
+        splitLine: { show: false },
+      },
+      yAxis: {
+        ...AXIS,
+        type: 'category' as const,
+        inverse: true,
+        data: rows.map((r) => r.op),
+        name: t('chart.axis.operator'),
+        nameLocation: 'end' as const,
+        nameGap: 7,
+      },
       series: [
         {
           type: 'bar' as const,
@@ -595,7 +623,7 @@ function OperatorOnTime({ metrics, wall }: { metrics: DerivedMetrics; wall: bool
         },
       ],
     }),
-    [rows.map((r) => `${r.op}:${r.pct.toFixed(1)}`).join('|'), wall, bar],
+    [rows.map((r) => `${r.op}:${r.pct.toFixed(1)}`).join('|'), wall, bar, t],
   );
   const worst = [...rows].sort((a, b) => a.pct - b.pct)[0];
   return (
@@ -753,6 +781,32 @@ function Hero({ metrics, alerts, sim_time_s, running }: { metrics: DerivedMetric
   );
 }
 
+function OperationalBrief({ alerts }: { alerts: Alert[] }) {
+  const t = useT();
+  const nextHour = useForecast((s) => s.byHorizon[60]);
+  const critical = alerts.filter((a) => a.severity === 'critical').length;
+  const routes = new Set(alerts.map((a) => a.route_id).filter(Boolean)).size;
+  const forecastRoutes = new Set(nextHour.map((a) => a.route_id).filter(Boolean)).size;
+  const items = [
+    { key: 'now', label: t('uxcc.brief.now'), value: t('uxcc.brief.nowValue', { critical, routes }), href: '#/alerts', tone: critical ? 'var(--color-sev-crit)' : 'var(--color-sev-ok)' },
+    { key: 'next', label: t('uxcc.brief.next'), value: t('uxcc.brief.nextValue', { routes: forecastRoutes }), href: '#/forecast', tone: 'var(--color-forecast)' },
+    { key: 'action', label: t('uxcc.brief.action'), value: t(critical ? 'uxcc.brief.actionCritical' : 'uxcc.brief.actionNormal'), href: critical ? '#/alerts' : '#/agentic', tone: 'var(--color-agent)' },
+  ];
+  return (
+    <section className="panel shrink-0 px-3 py-2" aria-label={t('uxcc.brief.title')} data-operational-brief>
+      <div className="mb-1 t-label">{t('uxcc.brief.title')}</div>
+      <div className="grid gap-1.5 sm:grid-cols-3">
+        {items.map((item) => (
+          <a key={item.key} href={item.href} className="min-w-0 rounded border border-[var(--color-line)] bg-[var(--color-bg2)] px-2 py-1 hover:border-[var(--color-text3)]">
+            <span className="t-label block" style={{ color: item.tone }}>{item.label}</span>
+            <span className="t-body block leading-snug text-[var(--color-text2)]">{item.value}</span>
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------- shell
 
 function Clock({ sim_time_s, wall }: { sim_time_s: number; wall: boolean }) {
@@ -826,24 +880,29 @@ export default function CommandCentre() {
       {/* The hero states the conclusion before the numbers restate it (plan §6.3 /
           item 9). Operator mode only - the wall has its own fixed 3-band layout. */}
       <Hero metrics={metrics} alerts={alerts} sim_time_s={snap.sim_time_s} running={running} />
+      <OperationalBrief alerts={alerts} />
       <KpiRow metrics={metrics} alerts={alerts} wall={false} />
       <div
-        className="grid min-h-0 flex-1 gap-2"
-        style={{ gridTemplateColumns: 'minmax(280px, 0.8fr) minmax(0, 1.3fr) minmax(360px, 1.05fr)' }}
+        data-command-workspace
+        className="grid flex-none grid-cols-1 gap-2 min-[900px]:grid-cols-2 min-[1400px]:min-h-0 min-[1400px]:flex-1 min-[1400px]:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.3fr)_minmax(360px,1.05fr)]"
       >
-        <div className="flex min-h-0 min-w-0 flex-col gap-2">
+        <div className="order-2 flex min-h-[420px] min-w-0 flex-col gap-2 overflow-hidden min-[1400px]:order-1 min-[1400px]:min-h-0">
           <Funnel metrics={metrics} wall={false} />
           {/* Item 13: the agent feed is what makes the system read as agentic rather than
               as a rule engine (plan §10.2). Exported by AgentConsole so the same stream
               renders here and on #/agentic. It takes whatever the funnel leaves in this
               column (the feed is `flex-1` inside this wrapper), with a floor so at least
               three entries always show. Operator mode only. */}
-          <div className="flex min-h-[150px] flex-1 flex-col">
+          {/* min-h-0 + overflow-hidden: longer (Mongolian) text in the funnel must shrink the
+              feed, never push it over the cards below. The feed scrolls inside itself. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <AgentActivityFeed limit={10} />
           </div>
         </div>
-        <MapCanvas className="min-h-0 min-w-0" />
-        <div className="flex min-h-0 min-w-0 flex-col gap-2">
+        <div data-command-map className="order-1 min-h-[340px] min-w-0 min-[900px]:col-span-2 min-[1400px]:order-2 min-[1400px]:col-span-1 min-[1400px]:min-h-0">
+          <MapCanvas className="h-full min-h-0 min-w-0" />
+        </div>
+        <div className="order-3 flex min-h-[420px] min-w-0 flex-col gap-2 min-[1400px]:min-h-0">
           <NextHour />
           <PriorityAlerts alerts={alerts} wall={false} className="min-h-0 flex-1" />
         </div>

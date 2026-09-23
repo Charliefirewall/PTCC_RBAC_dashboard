@@ -11,8 +11,8 @@
  * not control any of these systems, which is the same boundary as the bus side (L718).
  */
 
-import { EvidenceTag, Panel, StatusPill } from '../../components/primitives';
-import { useT } from '../../i18n/t';
+import { Callout, EvidenceTag, Panel, StatusPill } from '../../components/primitives';
+import { useT, useTx } from '../../i18n/t';
 import type { I18nKey } from '../../i18n/dict';
 
 interface Mode {
@@ -72,6 +72,7 @@ const MODES: Mode[] = [
 
 export default function Multimodal() {
   const t = useT();
+  const tx = useTx();
   return (
     <Panel
       titleKey="nav.multimodal"
@@ -91,18 +92,24 @@ export default function Multimodal() {
        * roughly 1.7:1 against the white light-theme surface. "Not built" is now carried
        * by the noData pill + FUTURE tag + text3 body, with the dimming only supporting it.
        */}
+      {([
+        { title: 'support.mm.road' as const, modes: MODES.slice(0, 2) },
+        { title: 'support.mm.rail' as const, modes: MODES.slice(2) },
+      ]).map((group) => (
+      <section key={group.title} className="mb-3">
+        <h3 className="t-label mb-2 uppercase tracking-wider text-[var(--color-text2)]">{t(group.title)}</h3>
       <div className="grid grid-cols-1 items-start gap-2 lg:grid-cols-2 2xl:grid-cols-3">
         {/* No `summary` on these panels: at 1024 the header is chevron + mode name + field
             count + FUTURE tag + "no interface exists" pill inside ~390 px, and the bare
             field count was the one of the four that got ellipsised (D-3). The two that
             carry the EVIDENCE stay. */}
-        {MODES.map((m, i) => (
+        {group.modes.map((m, i) => (
           <Panel
             key={m.key}
             titleKey={m.key}
             collapsible
             defaultOpen={i === 0}
-            className="opacity-75"
+            className="border-[var(--color-line)]"
             bodyClassName="p-2"
             right={
               <span className="flex shrink-0 items-center gap-2">
@@ -114,10 +121,10 @@ export default function Multimodal() {
             <h4 className="panel-title mb-1">{t('mm.fields')}</h4>
             {m.groups.map((g) => (
               <div key={g.title} className="mb-1.5">
-                <div className="t-meta font-semibold">{g.title}</div>
+                <div className="t-meta font-semibold">{tx(g.title)}</div>
                 <ul className="t-meta ml-3 list-disc">
                   {g.fields.map((f) => (
-                    <li key={f}>{f}</li>
+                    <li key={f}>{tx(f)}</li>
                   ))}
                 </ul>
               </div>
@@ -133,6 +140,11 @@ export default function Multimodal() {
           </Panel>
         ))}
       </div>
+      </section>
+      ))}
+      <Callout kind="info" title={t('support.mm.footerTitle')}>
+        {t('support.mm.footer')}
+      </Callout>
     </Panel>
   );
 }

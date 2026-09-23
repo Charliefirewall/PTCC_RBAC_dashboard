@@ -13,18 +13,30 @@ import { Icon, type IconName } from '../components/Icon';
 const ICONS: Record<string, IconName> = {
   dashboard: 'dashboard', command: 'command', map: 'map', regularity: 'route', passenger: 'passengers',
   alerts: 'alert', comms: 'comms', health: 'health', operators: 'operators', copilot: 'sparkles',
+  forecast: 'trend-up',
   agentic: 'agent', roi: 'roi', analytics: 'analytics', multimodal: 'multimodal', settings: 'settings',
   // The provenance row was added to MODULES without an entry here, so the rail rendered
   // an empty 16 px slot and the label sat out of line with its fourteen neighbours.
   provenance: 'info',
+  depot: 'depot',
+  platform: 'layers',
 };
+
+const GROUPS = [
+  { key: 'nav.group.operations', paths: new Set(['dashboard', 'command', 'map', 'regularity', 'passenger', 'alerts', 'comms', 'health', 'operators', 'depot']) },
+  { key: 'nav.group.intelligence', paths: new Set(['forecast', 'copilot', 'agentic', 'roi', 'analytics']) },
+  { key: 'nav.group.governance', paths: new Set(['multimodal', 'provenance', 'platform']) },
+  { key: 'nav.group.configuration', paths: new Set(['settings']) },
+] as const;
 
 export function NavRail({
   modules,
   current,
+  mobile = false,
 }: {
   modules: readonly { path: string; key: string; evidence: string }[];
   current: string;
+  mobile?: boolean;
 }) {
   const t = useT();
   const alerts = useAlerts((s) => s.alerts);
@@ -33,9 +45,20 @@ export function NavRail({
   return (
     <nav
       aria-label={t('nav.aria')}
-      className="flex w-52 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-[var(--color-line)] bg-[var(--color-bg1)] p-2"
+      data-primary-navigation
+      data-mobile-navigation={mobile || undefined}
+      className={`flex shrink-0 flex-col overflow-y-auto bg-[var(--color-bg1)] p-2 ${mobile ? 'h-full w-full' : 'hidden w-52 border-r border-[var(--color-line)] lg:flex'}`}
     >
-      {modules.map((m) => {
+      {GROUPS.map((group) => {
+        const entries = modules.filter((m) => group.paths.has(m.path));
+        if (!entries.length) return null;
+        return (
+          <div key={group.key} className="mb-2 last:mb-0">
+            <div className="t-label sticky top-0 mb-1 bg-[var(--color-bg1)] px-2 py-1" style={{ zIndex: 'var(--z-raised)' }}>
+              {t(group.key as I18nKey)}
+            </div>
+            <div className="flex flex-col gap-0.5">
+            {entries.map((m) => {
         const active = current === m.path || (m.path === 'regularity' && current.startsWith('regularity'));
         return (
           <a
@@ -58,6 +81,10 @@ export function NavRail({
               <EvidenceTag label={m.evidence as Evidence} />
             ) : null}
           </a>
+        );
+            })}
+            </div>
+          </div>
         );
       })}
     </nav>

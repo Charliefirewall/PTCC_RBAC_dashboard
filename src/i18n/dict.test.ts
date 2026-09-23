@@ -16,6 +16,7 @@ import { uxccDict } from './dict.uxcc';
 import { uxregDict } from './dict.uxreg';
 import { uxvehDict } from './dict.uxveh';
 import { uxrpDict } from './dict.uxrp';
+import { mnfixDict } from './dict.mnfix';
 import { dict } from './dict';
 import { t } from './t';
 import type { I18nKey } from './dict';
@@ -31,6 +32,7 @@ const AREAS: [string, Record<string, unknown>][] = [
   ['agentic', agenticDict], ['roles', rolesDict], ['map', mapDict], ['modules', modulesDict],
   ['overlay', overlayDict], ['dash', dashDict], ['copilot', copilotDict], ['kit', kitDict],
   ['roi', roiDict], ['predict', predictDict], ['depot', depotDict], ['sop', sopDict], ['insight', insightDict], ['uxcc', uxccDict], ['uxreg', uxregDict], ['uxveh', uxvehDict], ['uxrp', uxrpDict],
+  ['mnfix', mnfixDict],
 ];
 
 describe('dictionary integrity', () => {

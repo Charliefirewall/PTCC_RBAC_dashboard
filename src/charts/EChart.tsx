@@ -13,6 +13,7 @@ import {
   MarkAreaComponent,
   MarkLineComponent,
   VisualMapComponent,
+  DataZoomComponent,
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 
@@ -27,6 +28,7 @@ echarts.use([
   MarkAreaComponent,
   MarkLineComponent,
   VisualMapComponent,
+  DataZoomComponent,
   CanvasRenderer,
 ]);
 
@@ -34,9 +36,15 @@ export const CHART_BASE = {
   backgroundColor: 'transparent',
   animation: false as const,
   textStyle: { fontFamily: 'Inter, system-ui, sans-serif', color: '#9caabb', fontSize: 11 },
-  grid: { left: 44, right: 12, top: 18, bottom: 26, containLabel: false },
+  // Labels and axis names belong inside the chart allocation. Individual charts can
+  // still reserve extra room for rotated labels, but this prevents translated text
+  // and responsive tick labels from being clipped at the panel edge by default.
+  grid: { left: 18, right: 18, top: 24, bottom: 18, containLabel: true },
   tooltip: {
     trigger: 'axis' as const,
+    // ECharts otherwise allows a long tooltip to escape the canvas and disappear
+    // beneath the adjacent dashboard panel at narrow widths.
+    confine: true,
     backgroundColor: '#171e2a',
     borderColor: '#273241',
     textStyle: { color: '#e7edf5', fontSize: 11 },
@@ -48,6 +56,18 @@ export const AXIS = {
   axisTick: { show: false },
   splitLine: { lineStyle: { color: '#1c2532' } },
   axisLabel: { color: '#8794a6', fontSize: 10 }, // mirrors --color-text3 (dark)
+  nameTextStyle: { color: '#8794a6', fontSize: 10, padding: 2 },
+};
+
+/**
+ * Replace component collections whose length/shape changes between renders. ECharts'
+ * default merge keeps unmatched old series alive, which produced ghost comparison and
+ * actual-trip lines after users changed Route Profile controls.
+ */
+export const SET_OPTION_OPTS = {
+  notMerge: false,
+  lazyUpdate: true,
+  replaceMerge: ['series', 'xAxis', 'yAxis', 'legend', 'visualMap', 'dataZoom'],
 };
 
 /*
@@ -75,6 +95,7 @@ interface AxisTheme {
   axisLine: { lineStyle: { color: string } };
   splitLine: { lineStyle: { color: string } };
   axisLabel: { color: string };
+  nameTextStyle: { color: string };
 }
 
 function readTheme(): { base: Record<string, unknown>; axis: AxisTheme } {
@@ -94,6 +115,7 @@ function readTheme(): { base: Record<string, unknown>; axis: AxisTheme } {
       axisLine: { lineStyle: { color: line } },
       splitLine: { lineStyle: { color: lineSoft } },
       axisLabel: { color: text3 },
+      nameTextStyle: { color: text3 },
     },
   };
 }
@@ -120,6 +142,7 @@ function themeAxis(a: unknown, axis: AxisTheme): unknown {
     axisLine: { ...(o.axisLine ?? {}), lineStyle: { ...(o.axisLine?.lineStyle ?? {}), ...axis.axisLine.lineStyle } },
     splitLine: { ...(o.splitLine ?? {}), lineStyle: { ...(o.splitLine?.lineStyle ?? {}), ...axis.splitLine.lineStyle } },
     axisLabel: { ...(o.axisLabel ?? {}), ...axis.axisLabel },
+    nameTextStyle: { ...(o.nameTextStyle ?? {}), ...axis.nameTextStyle },
   };
 }
 
@@ -140,10 +163,13 @@ export function EChart({
   option,
   className = '',
   style,
+  ariaLabel,
 }: {
   option: Record<string, unknown>;
   className?: string;
   style?: React.CSSProperties;
+  /** Concise chart purpose for screen readers; defaults to the named data series. */
+  ariaLabel?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const inst = useRef<echarts.ECharts | null>(null);
@@ -161,11 +187,27 @@ export function EChart({
   }, []);
 
   useEffect(() => {
-    const apply = () => inst.current?.setOption(themed(option), { notMerge: false, lazyUpdate: true });
+    const apply = () => inst.current?.setOption(themed(option), SET_OPTION_OPTS);
     apply();
     window.addEventListener('ptcc:theme', apply);
     return () => window.removeEventListener('ptcc:theme', apply);
   }, [option]);
 
-  return <div ref={ref} className={className} style={{ width: '100%', height: '100%', ...style }} />;
+  const inferredLabel = ariaLabel ?? (() => {
+    const series = Array.isArray(option.series) ? option.series : [];
+    const names = series
+      .map((s) => (s && typeof s === 'object' ? (s as { name?: unknown }).name : undefined))
+      .filter((n): n is string => typeof n === 'string' && n.length > 0);
+    return names.length ? names.join(', ') : 'Operational data chart';
+  })();
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{ width: '100%', height: '100%', ...style }}
+      role="img"
+      aria-label={inferredLabel}
+    />
+  );
 }

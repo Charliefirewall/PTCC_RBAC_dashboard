@@ -30,11 +30,12 @@ import {
 } from '../../components/primitives';
 import { NODES } from '../../data/corridors';
 import type { I18nKey } from '../../i18n/dict';
-import { useT } from '../../i18n/t';
+import { useT, useTx } from '../../i18n/t';
 import { bandOf } from '../../rules/thresholds';
 import { haversine } from '../../sim/geo';
-import type { Vehicle } from '../../sim/types';
-import { useAlerts, useEvents, useSettings, useSim, world } from '../../store';
+import { tripIdOf, type Vehicle } from '../../sim/types';
+import { useAlerts, useEvents, useSelection, useSettings, useSim, world } from '../../store';
+import { useForecast } from '../../store/forecast';
 import { useHashQuery } from '../../app/App';
 import { TripTab } from './TripTab';
 import { LevelBadge } from '../alerts/sop';
@@ -106,8 +107,18 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
   const alerts = useAlerts((s) => s.alerts);
   const events = useEvents((s) => s.events);
   // Arriving from an alert (`?alert=`) opens the trip; otherwise the source-data tab as before.
-  const fromAlert = useHashQuery().get('alert');
-  const [tab, setTab] = useState<TabId>(fromAlert ? 'trip' : 'ops');
+  const query = useHashQuery();
+  const fromAlert = query.get('alert');
+  const fromForecast = query.get('forecast');
+  const forecastH = Number(query.get('h'));
+  const fromMap = query.get('from') === 'map';
+  // Map drill-down lands on the operational trip context promised by the hover
+  // card; direct/deep links retain the established source-data landing tab.
+  const [tab, setTab] = useState<TabId>(fromAlert || fromForecast || fromMap ? 'trip' : 'ops');
+  const forecasts = useForecast((s) => s.byHorizon);
+  const sourceForecast = fromForecast
+    ? ([15, 30, 45, 60] as const).flatMap((h) => forecasts[h]).find((f) => f.id === fromForecast) ?? null
+    : null;
 
   const identity = world.vehicleById.get(vehicleId);
   // Live values come from the snapshot, never from the world object, so the card
@@ -154,7 +165,7 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
       <div className="flex shrink-0 items-center justify-between gap-2">
         <DrillBreadcrumb
           path={[
-            { key: 'drill.network', onClick: () => { location.hash = '#/command'; } },
+            { key: 'drill.network', onClick: () => { location.hash = fromMap ? '#/map' : '#/command'; } },
             { key: 'drill.route', label: v.route_id, onClick: () => { location.hash = '#/regularity'; } },
             { key: 'drill.vehicle', label: v.vehicle_id },
             { key: 'drill.detail' },
@@ -162,6 +173,29 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
         />
         <EvidenceTag label="CONFIRMED" cite="S5 · Table 8" />
       </div>
+
+      {fromAlert || sourceForecast ? (
+        <div
+          className={`flex shrink-0 flex-wrap items-center gap-2 rounded border-l-4 bg-[var(--color-bg2)] px-3 py-2 ${sourceForecast ? 'border-l-[var(--color-forecast)]' : 'border-l-[var(--color-sev-warn)]'}`}
+          data-vehicle-source-context={sourceForecast ? 'forecast' : 'alert'}
+        >
+          <StatusPill tone={sourceForecast ? 'neutral' : 'warn'}>{sourceForecast ? t('fc.tag') : t('uxveh.actualAlert')}</StatusPill>
+          <span className="t-body min-w-0 flex-1">
+            {sourceForecast
+              ? t('uxveh.openedFromForecast', { horizon: sourceForecast.horizon_min, chance: Math.round(sourceForecast.probability * 100) })
+              : t('uxveh.openedFromAlert', { id: fromAlert ?? EM_DASH })}
+          </span>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (sourceForecast) location.hash = `#/forecast?h=${Number.isFinite(forecastH) ? forecastH : sourceForecast.horizon_min}&id=${encodeURIComponent(sourceForecast.id)}`;
+              else if (fromAlert) { useSelection.getState().selectAlert(fromAlert); location.hash = '#/alerts'; }
+            }}
+          >
+            {t('uxveh.returnSource')} →
+          </Button>
+        </div>
+      ) : null}
 
       {/* ---- S5 header strip: the vehicle card facts + the four key questions, one row */}
       <div className="grid shrink-0 grid-cols-1 gap-2 md:grid-cols-3 xl:grid-cols-5">
@@ -173,9 +207,15 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
             </StatusPill>
           </div>
           <dl className="t-body flex flex-col gap-0.5">
+            <Field label={t('map.popTrip')}>
+              <span className="num">{tripIdOf(v)}</span>
+            </Field>
+            <Field label={t('map.popProgress')}>
+              <span className="num">{intOr(v.trip_progress * 100)} % · {v.route_id}</span>
+            </Field>
             <Field label={t('veh.delay')}>
               <span className="num" style={{ color: devColor(v.schedule_deviation, th.schedule_deviation_s) }}>
-                {minOr(v.schedule_deviation)} min
+                {minOr(v.schedule_deviation)} {t('unit.min')}
               </span>
             </Field>
             <Field label={t('veh.occupancy')}>
@@ -198,6 +238,12 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
                 <span className="t-meta">{t('uxveh.routeAlert', { route: lead.route_id })}</span>
               ) : null}
             </div>
+          ) : sourceForecast ? (
+            <div className="flex min-w-0 flex-col gap-1">
+              <span className="text-[var(--color-forecast)]">{t('fc.tag')} · +{sourceForecast.horizon_min} {t('unit.min')}</span>
+              <span className="text-[var(--color-text1)]">{t(sourceForecast.title_key as I18nKey, sourceForecast.params)}</span>
+              <span className="t-meta">{t('uxveh.forecastNotActual')}</span>
+            </div>
           ) : (
             <span>{t('veh.noAlert')}</span>
           )}
@@ -208,7 +254,7 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
             {/* A long place name must wrap inside the box, not widen it. */}
             <span className="break-words text-[var(--color-text1)]">{place}</span>
             <span className="num">
-              {t('veh.nextStop')}: {fixOr(v.distance_to_next_stop_m / 1000, 1)} km
+              {t('veh.nextStop')}: {fixOr(v.distance_to_next_stop_m / 1000, 1)} {t('unit.km')}
               {nextStop ? ` · ${lang === 'mn' ? nextStop.name_mn : nextStop.name_en}` : ''}
             </span>
           </div>
@@ -218,7 +264,7 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
           {/* The breaching source row IS the explanation - no AI involved (Tier 1). */}
           <div className="flex flex-col gap-1">
             <span className="num text-[var(--color-text1)]">
-              {t('veh.speed')} {intOr(v.speed)} km/h · {minOr(v.schedule_deviation)} min
+              {t('veh.speed')} {intOr(v.speed)} {t('unit.kmh')} · {minOr(v.schedule_deviation)} {t('unit.min')}
             </span>
             {lead ? (
               <span className="num">
@@ -229,14 +275,28 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
                   unit: paramOr(lead.metric.unit),
                 })}
               </span>
+            ) : sourceForecast?.terms ? (
+              <span className="num text-[var(--color-forecast)]">
+                {t('forecast.liveVsNormal')}: {minOr(sourceForecast.terms.drift_s)} {t('unit.min')} · {t('forecast.confidence')}: {Math.round(sourceForecast.confidence * 100)}%
+              </span>
             ) : null}
           </div>
         </QBox>
 
         <QBox titleKey="q.response">
-          <Button size="sm" onClick={() => { location.hash = '#/alerts'; }}>
-            {t('veh.playbook')} →
-          </Button>
+          <div className="flex flex-col items-start gap-1">
+            <Button size="sm" onClick={() => {
+              if (sourceForecast) location.hash = `#/forecast?h=${sourceForecast.horizon_min}&id=${encodeURIComponent(sourceForecast.id)}`;
+              else if (lead) { useSelection.getState().selectAlert(lead.id); location.hash = '#/alerts'; }
+              else location.hash = '#/alerts';
+            }}>
+              {sourceForecast ? t('uxveh.reviewPreparation') : t('veh.playbook')} →
+            </Button>
+            {sourceForecast ? <span className="t-meta">{t('uxveh.forecastResponseNote')}</span> : null}
+            <a className="t-meta text-[var(--color-accent)] hover:underline" href={`#/analytics?tab=route&route=${encodeURIComponent(v.route_id)}`}>
+              {t('forecast.openHistorical')} →
+            </a>
+          </div>
         </QBox>
       </div>
 
@@ -288,8 +348,8 @@ function OpsTab({ v }: { v: Vehicle }) {
   // not a label.
   const rows: { key: I18nKey; value: string; source: 'UB Card' | 'T-Box'; note?: string }[] = [
     { key: 'veh.time', value: v.timestamp.slice(11, 19), source: 'UB Card' },
-    { key: 'veh.speed', value: `${intOr(v.speed)} km/h`, source: 'UB Card', note: t('veh.speedNote') },
-    { key: 'veh.scheduleDeviation', value: `${minOr(v.schedule_deviation)} min`, source: 'UB Card' },
+    { key: 'veh.speed', value: `${intOr(v.speed)} ${t('unit.kmh')}`, source: 'UB Card', note: t('veh.speedNote') },
+    { key: 'veh.scheduleDeviation', value: `${minOr(v.schedule_deviation)} ${t('unit.min')}`, source: 'UB Card' },
     // A bus with capacity 0 printed "12 / 0 (Infinity %)". It now prints the counts it
     // really has and an em dash where the percentage cannot exist.
     { key: 'veh.passengerLoad', value: `${intOr(v.pax_count)} / ${intOr(v.capacity)} (${loadPct === null ? EM_DASH : `${intOr(loadPct)} %`})`, source: 'UB Card' },
@@ -369,6 +429,7 @@ function OpsTab({ v }: { v: Vehicle }) {
 
 function CctvTab({ v, place }: { v: Vehicle; place: string }) {
   const t = useT();
+  const tx = useTx();
   // The form only re-captions the placeholder. There is no footage: pretending to
   // retrieve any would be the one thing in this demo that is a lie.
   const [bus, setBus] = useState(v.vehicle_id);
@@ -436,7 +497,7 @@ function CctvTab({ v, place }: { v: Vehicle; place: string }) {
         }}
       >
         <label className="flex flex-col gap-1">
-          <span className="num text-[var(--color-text3)]">vehicle_id</span>
+          <span className="num text-[var(--color-text3)]">{tx('vehicle_id')}</span>
           <input value={bus} onChange={(e) => setBus(e.target.value)} className={`w-28 ${inputCls}`} />
         </label>
         <label className="flex min-w-0 flex-col gap-1">

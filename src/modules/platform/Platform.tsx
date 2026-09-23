@@ -65,6 +65,14 @@ export default function Platform() {
         right={<EvidenceTag label="CONFIRMED" cite="README · plan §14.4 · R1035" />}
         bodyClassName="p-3"
       >
+        <Callout kind="info" title={t('support.plat.chain')}>
+          {t('support.plat.chainBody')}
+          <span className="mt-2 flex flex-wrap gap-3">
+            <PanelLink href="#/provenance">{t('dep.openQuestions')}</PanelLink>
+            <PanelLink href="#/settings">{t('nav.settings')}</PanelLink>
+            <PanelLink href="#/analytics">{t('nav.analytics')}</PanelLink>
+          </span>
+        </Callout>
         <Callout
           kind="danger"
           title={t('plat.icdTitle')}

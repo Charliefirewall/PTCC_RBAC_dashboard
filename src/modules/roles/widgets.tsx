@@ -10,6 +10,7 @@
  * one onto the other.
  */
 
+import { useTx } from '../../i18n/t';
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   Bar,
@@ -82,8 +83,9 @@ const pbOf = (id: PlaybookId): { recommended: string[]; compulsory: string[] } =
  */
 function useTk() {
   const t = useT();
+  const tx = useTx();
   return (k: string | undefined, params?: Record<string, string | number>): string =>
-    k && k in dict ? t(k as I18nKey, params) : p(k);
+    k && k in dict ? t(k as I18nKey, params) : tx(p(k));
 }
 
 function AgentName({ id }: { id: string }) {
@@ -224,9 +226,9 @@ function EventLine({ e, onClick }: { e: EmergencyEvent; onClick?: () => void }) 
     >
       <EventSeverityBadge level={e.severity_level} size="sm" />
       <span className="min-w-0 flex-1">
-        <span className="t-body block truncate font-medium">{p(e.event_type)}</span>
+        <span className="t-body block truncate font-medium">{tk(e.event_type)}</span>
         <span className="num t-meta block truncate">
-          {p(e.event_id)} · {p(e.route_number ?? e.bus_number ?? e.location?.label)} · {tk(`ev.stage.${e.stage}`)}
+          {p(e.event_id)} · {tk(e.route_number ?? e.bus_number ?? e.location?.label)} · {tk(`ev.stage.${e.stage}`)}
         </span>
       </span>
       <span className="t-meta shrink-0">›</span>
@@ -289,11 +291,11 @@ function DecisionLine({ d, alert }: { d: AgentDecision; alert?: Alert }) {
       {alert ? <SeverityChip severity={alert.severity} size="sm" /> : null}
       <span className="min-w-0 flex-1">
         <span className="t-body block truncate font-medium">
-          {alert ? tk(alert.title_key, alert.params) : p(d.recommendation.event_type)}
+          {alert ? tk(alert.title_key, alert.params) : tk(d.recommendation.event_type)}
         </span>
         <span className="num t-meta block truncate">
           <AgentName id={d.agentId} /> · {confPct(d.confidence)} ·{' '}
-          {p(alert?.vehicle_id ?? alert?.route_id ?? alert?.operator_id ?? d.recommendation.event_type)}
+          {tk(alert?.vehicle_id ?? alert?.route_id ?? alert?.operator_id ?? d.recommendation.event_type)}
         </span>
       </span>
       <StageChip stage={d.stage} small />
@@ -316,6 +318,8 @@ function AgentQueue({ max = 8, rollup = false }: { max?: number; rollup?: boolea
     return [...acc.entries()].sort((x, y) => y[1] - x[1]);
   }, [open]);
   if (open.length === 0) return null;
+  const next = open[0]!;
+  const nextAlert = byId.get(next.alertIds[0]!);
   return (
     <section className="mt-1 border-t border-[var(--color-line-soft)] pt-1.5">
       <header className="flex items-center gap-2">
@@ -331,6 +335,21 @@ function AgentQueue({ max = 8, rollup = false }: { max?: number; rollup?: boolea
         </span>
       </header>
       <p className="t-meta py-0.5">{t('dash.agentQueueNote')}</p>
+      <div className="mb-1.5 rounded border-l-2 border-l-[var(--color-agent)] bg-[var(--color-bg2)] px-2 py-1.5" data-role-next-action="">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="panel-title" style={{ color: 'var(--color-agent)' }}>{t('rw.nextSafeAction')}</span>
+          <span className="t-body min-w-0 flex-1 font-semibold text-[var(--color-text1)]">
+            {t(next.recommendation.label.key as I18nKey, next.recommendation.label.params)}
+          </span>
+          <Button size="sm" onClick={openAgentConsole}>{t('rw.reviewRecommendation')}</Button>
+        </div>
+        <p className="t-meta mt-0.5">
+          {t('rw.nextActionWhy', {
+            subject: nextAlert?.vehicle_id ?? nextAlert?.route_id ?? nextAlert?.operator_id ?? next.recommendation.event_type,
+            confidence: confPct(next.confidence),
+          })}
+        </p>
+      </div>
       {rollup && (
         <ul className="flex flex-wrap gap-1.5 pb-1">
           {perAgent.map(([id, n]) => (
@@ -444,7 +463,7 @@ function OpsKpi() {
             value={nFixed(pct, 1, ' %')}
             tone={!isNum(pct) ? undefined : pct >= 90 ? 'ok' : pct >= 75 ? 'warn' : 'crit'}
           />
-          <Row label={t('rw.meanDev')} value={isNum(devMin) ? `${devMin.toFixed(1)} min` : DASH} />
+          <Row label={t('rw.meanDev')} value={isNum(devMin) ? `${devMin.toFixed(1)} ${t('unit.min')}` : DASH} />
           <Row label={t('rw.disrupted')} value={nInt(disrupted)} tone={disrupted === 0 ? 'ok' : 'warn'} />
           <Row label={t('rw.bunching')} value={nInt(bunching)} tone={bunching === 0 ? 'ok' : 'warn'} />
         </ul>
@@ -587,15 +606,15 @@ function ProposedDetail({ d, alert }: { d: AgentDecision; alert?: Alert }) {
             <AgentName id={d.agentId} />
           </span>
           {alert ? <SeverityChip severity={alert.severity} size="sm" /> : null}
-          <span className="num t-meta">{p(d.alertIds[0])}</span>
+          <span className="num t-meta">{tk(d.alertIds[0])}</span>
         </div>
         <p className="t-body break-words text-[var(--color-text2)]">
-          {alert ? tk(alert.title_key, alert.params) : p(d.recommendation.event_type)}
+          {alert ? tk(alert.title_key, alert.params) : tk(d.recommendation.event_type)}
         </p>
         <ul className="divide-y divide-[var(--color-line-soft)]">
-          <Row label={t('dash.propType')} value={p(d.recommendation.event_type)} />
+          <Row label={t('dash.propType')} value={tk(d.recommendation.event_type)} />
           <Row label={t('dash.propSeverity')} value={p(d.recommendation.severity_level)} />
-          <Row label={t('dash.propPlaybook')} value={p(d.recommendation.playbook)} />
+          <Row label={t('dash.propPlaybook')} value={tk(d.recommendation.playbook)} />
           <Row label={t('dash.propActions')} value={`${pb.recommended.length + pb.compulsory.length} / ${pb.compulsory.length}`} />
           <Row label={t('dash.confidence')} value={confPct(d.confidence)} />
         </ul>
@@ -1280,12 +1299,14 @@ function EvidenceBundle() {
           <MoreRows shown={ROW_CAP} total={e.evidence.length} />
         </ul>
       )}
-      <div className="mt-2 flex items-center gap-2">
-        <Button size="sm" disabled title={t('rw.uploadFuture')}>
-          {t('rw.upload')}
-        </Button>
-        <EvidenceTag label="FUTURE" cite="no upload path exists in this demo" />
-        {!can(role, 'upload_evidence') && <span className="t-meta">{t('rw.notPermittedShort')}</span>}
+      <div className="mt-2 rounded border border-dashed border-[var(--color-line)] bg-[var(--color-bg2)] p-2" data-evidence-upload-preview="">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="panel-title">{t('rw.uploadPreview')}</span>
+          <EvidenceTag label="FUTURE" cite="no upload path exists in this demo" />
+        </div>
+        <p className="t-meta mt-1">{t('rw.uploadFuture')}</p>
+        <p className="t-meta mt-1">{t('rw.uploadRequirements')}</p>
+        {!can(role, 'upload_evidence') && <p className="t-meta mt-1 text-[var(--color-sev-warn)]">{t('rw.notPermittedShort')}</p>}
       </div>
     </W>
   );
@@ -1393,6 +1414,7 @@ function OverrideReview() {
 function AuditLog() {
   const t = useT();
   const tk = useTk();
+  const tx = useTx();
   const audit = useEvents((s) => s.audit);
   return (
     <W titleKey="rw.auditLog" evidence="CONFIRMED" cite="L1298-L1310 every stage logged" summary={nInt(audit.length)}>
@@ -1403,7 +1425,7 @@ function AuditLog() {
           {audit.slice(0, 12).map((a, i) => (
             <li key={i} className="flex items-center gap-2 py-1">
               <span className="num t-meta w-10 shrink-0">{p(a.at?.slice(11, 16))}</span>
-              <span className="t-body min-w-0 flex-1 truncate">{p(a.action)}</span>
+              <span className="t-body min-w-0 flex-1 truncate">{tx(p(a.action))}</span>
               <span className="num t-meta max-w-[35%] shrink-0 truncate">{tk(`role.${a.role}`)}</span>
             </li>
           ))}

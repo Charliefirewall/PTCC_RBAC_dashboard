@@ -44,12 +44,12 @@ import type { ExpressionSpecification, GeoJSONSource, StyleSpecification } from 
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { UB_BBOX } from '../../data/corridors';
 import { segmentLine } from '../../data/segments';
-import type { Vehicle } from '../../sim/types';
+import { tripIdOf, type Vehicle } from '../../sim/types';
 import { useAlerts, useSelection, useSettings, useSim, world } from '../../store';
 import { LOAD_BANDS, bandColor, bandOf } from '../../rules/thresholds';
 import { useT, useLang } from '../../i18n/t';
 import type { I18nKey } from '../../i18n/dict';
-import { Chevron, EvidenceTag } from '../../components/primitives';
+import { Button, Chevron, EvidenceTag, StatusPill } from '../../components/primitives';
 import { attachClusters, reducedMotion, type ClusterController } from '../../map/clusters';
 import { routePopup, stopPopup, vehiclePopup, type LivePopup, type PopupCtx } from '../../map/popups';
 import { devTier, riskOf } from '../../map/risk';
@@ -440,7 +440,10 @@ function MapGL({
         fallbackRef.current('tiles');
     });
 
-    const rScale = wall ? 1.4 : 1; // +40 % marker radius on the wall (plan 20.8)
+    // Canvas/SVG map marks do not inherit the shell's --wall-scale. Give them their own
+    // viewing-distance scale so the spatial view does not become the one tiny element
+    // on an otherwise 2.2x wall canvas.
+    const rScale = wall ? 1.8 : 1;
     let raf = 0;
     const unsubs: (() => void)[] = [];
 
@@ -732,6 +735,9 @@ function MapGL({
       // `ptccTick` (K4) and the selection subscription below opens one (K2). Stays
       // null in wall mode, which registers no interaction at all.
       let popup: LivePopup | null = null;
+      let hoverPopup: LivePopup | null = null;
+      let hoverId = '';
+      let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
       const show = (p: LivePopup | null) => {
         popup?.remove();
         popup = p;
@@ -739,6 +745,42 @@ function MapGL({
         // loop keeps ticking a detached popup and a re-click cannot reopen it.
         p?.once('close', () => {
           if (popup === p) popup = null;
+        });
+      };
+      const cancelHoverClose = () => {
+        if (hoverCloseTimer !== null) clearTimeout(hoverCloseTimer);
+        hoverCloseTimer = null;
+      };
+      const closeHover = () => {
+        cancelHoverClose();
+        hoverPopup?.remove();
+        hoverPopup = null;
+        hoverId = '';
+      };
+      const scheduleHoverClose = () => {
+        cancelHoverClose();
+        // Allows the pointer to cross the small MapLibre tip gap and enter the
+        // card, where Open detail remains a real, reachable action.
+        hoverCloseTimer = setTimeout(closeHover, 140);
+      };
+      const showHover = (id: string) => {
+        if (!id || id === hoverId) return;
+        closeHover();
+        // One information surface at a time: a nearby hover card must not stack
+        // over a click-selected popup and obscure either card's actions.
+        if (popup) show(null);
+        hoverId = id;
+        const p = vehiclePopup(map, id, ctxRef.current, {
+          hover: true,
+          onPointerEnter: cancelHoverClose,
+          onPointerLeave: scheduleHoverClose,
+        });
+        hoverPopup = p;
+        p?.once('close', () => {
+          if (hoverPopup === p) {
+            hoverPopup = null;
+            hoverId = '';
+          }
         });
       };
 
@@ -958,6 +1000,7 @@ function MapGL({
 
         // The bus keeps moving while its popup is open (K4).
         popup?.ptccTick?.();
+        hoverPopup?.ptccTick?.();
       };
       raf = requestAnimationFrame(frame);
 
@@ -1066,12 +1109,14 @@ function MapGL({
       map.on('click', 'vehicles', (e) => {
         const id = e.features?.[0]?.properties?.['id'];
         if (typeof id !== 'string' || !claim(e as unknown as Claimable)) return;
+        closeHover();
         useSelection.getState().selectVehicle(id);
         // Re-clicking the already-selected bus is not a store change, so nothing
         // would fire; re-open the popup the operator just dismissed.
         if (!popup) show(vehiclePopup(map, id, ctxRef.current));
       });
       map.on('click', 'alert-pins', (e) => {
+        closeHover();
         const p = e.features?.[0]?.properties;
         if (!claim(e as unknown as Claimable)) return;
         const vid = typeof p?.['vehicle_id'] === 'string' ? p['vehicle_id'] : '';
@@ -1085,6 +1130,7 @@ function MapGL({
         }
       });
       map.on('click', 'stops', (e) => {
+        closeHover();
         const p = e.features?.[0]?.properties;
         const sid = typeof p?.['stop_id'] === 'string' ? p['stop_id'] : '';
         const rid = typeof p?.['route_id'] === 'string' ? p['route_id'] : '';
@@ -1092,16 +1138,28 @@ function MapGL({
         show(stopPopup(map, e.lngLat, sid, rid, ctxRef.current));
       });
       map.on('click', 'route-lines', (e) => {
+        closeHover();
         const id = e.features?.[0]?.properties?.['route_id'];
         if (typeof id !== 'string' || !claim(e as unknown as Claimable)) return;
         useSelection.getState().selectRoute(id);
         show(routePopup(map, e.lngLat, id, ctxRef.current));
       });
+      // GPU markers have no DOM of their own, so hover is driven from the rendered
+      // feature under the pointer. `mousemove` (not only `mouseenter`) also handles
+      // moving directly from one overlapping bus to another.
+      map.on('mousemove', 'vehicles', (e) => {
+        const id = e.features?.[0]?.properties?.['id'];
+        if (typeof id === 'string') showHover(id);
+      });
+      map.on('mouseleave', 'vehicles', scheduleHoverClose);
       for (const layer of ['vehicles', 'alert-pins', 'stops', 'route-lines']) {
         map.on('mouseenter', layer, () => (map.getCanvas().style.cursor = 'pointer'));
         map.on('mouseleave', layer, () => (map.getCanvas().style.cursor = ''));
       }
-      unsubs.push(() => show(null));
+      unsubs.push(() => {
+        closeHover();
+        show(null);
+      });
 
       // Verification hook. NOT gated on `import.meta.env.DEV`, on purpose: the
       // checks that use it (the cluster-vs-funnel invariant, the offline basemap
@@ -1116,6 +1174,7 @@ function MapGL({
         clusterTotals: () => clusterRef.current?.totals() ?? null,
         funnel: () => useSim.getState().metrics?.funnel ?? null,
         fleet: () => world.vehicles.length,
+        hoveredVehicle: () => hoverId || null,
         zoom: () => map.getZoom(),
         setZoom: (z: number) => map.setZoom(z),
         center: () => {
@@ -1441,6 +1500,7 @@ function MapGL({
           setColorMode={setColorMode}
         />
       )}
+      {!wall ? <SelectedVehicleInsight /> : null}
       <MapLegend colorMode={colorMode} compact={compact} />
       {notice && (
         <div
@@ -1452,6 +1512,48 @@ function MapGL({
         </div>
       )}
     </div>
+  );
+}
+
+function SelectedVehicleInsight() {
+  const t = useT();
+  const lang = useLang();
+  const selected = useSelection((s) => s.vehicle_id);
+  useSim((s) => s.tick);
+  if (!selected) return null;
+  const v = world.vehicleById.get(selected);
+  if (!v) return null;
+  const route = world.routeById.get(v.route_id);
+  const stop = route?.stops.find((s) => s.stop_id === v.next_stop_id);
+  const alert = useAlerts.getState().alerts.find((a) => a.vehicle_id === v.vehicle_id || (a.route_id === v.route_id && a.severity === 'critical'));
+  const load = Math.round((v.pax_count / Math.max(1, v.capacity)) * 100);
+  const deviation = v.schedule_deviation / 60;
+  const open = () => {
+    location.hash = `#/vehicle/${v.vehicle_id}?from=map&trip=${encodeURIComponent(tripIdOf(v))}`;
+  };
+  return (
+    <aside
+      data-map-insight
+      className="absolute right-2 top-12 w-[min(17rem,calc(100%-1rem))] rounded-md border border-[var(--color-line)] bg-[color-mix(in_srgb,var(--color-bg1)_94%,transparent)] p-2 shadow-[var(--shadow-2)] sm:top-2"
+      style={{ zIndex: 'var(--z-raised)' }}
+      aria-label={t('map.insight.title')}
+    >
+      <div className="flex items-center gap-2">
+        <strong className="num t-card min-w-0 flex-1 truncate">{v.vehicle_id} · {v.route_id}</strong>
+        <StatusPill tone={alert?.severity === 'critical' ? 'crit' : alert ? 'warn' : 'ok'}>
+          {alert ? t('map.insight.alert') : t('map.insight.clear')}
+        </StatusPill>
+      </div>
+      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+        <div><dt className="t-label">{t('map.insight.deviation')}</dt><dd className="num">{deviation >= 0 ? '+' : ''}{deviation.toFixed(1)} {t('unit.min')}</dd></div>
+        <div><dt className="t-label">{t('map.insight.load')}</dt><dd className="num">{load}% · {v.pax_count}/{v.capacity}</dd></div>
+        <div className="col-span-2"><dt className="t-label">{t('map.insight.nextStop')}</dt><dd className="truncate">{stop ? (lang === 'mn' ? stop.name_mn : stop.name_en) : t('map.popNone')} · {Math.round(v.distance_to_next_stop_m)} m</dd></div>
+      </dl>
+      <div className="mt-2 flex items-center justify-end gap-1">
+        <Button size="sm" onClick={() => useSelection.getState().selectVehicle(null)}>{t('map.insight.clearSelection')}</Button>
+        <Button size="sm" variant="primary" onClick={open}>{t('map.actOpenDetail')}</Button>
+      </div>
+    </aside>
   );
 }
 
@@ -1545,7 +1647,7 @@ function LayerPanel({
       <div
         className={`${
           pinned ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'
-        } w-[13rem] flex-col gap-2 rounded border border-[var(--color-line)] bg-[color-mix(in_srgb,var(--color-bg1)_94%,transparent)] p-2 shadow-[var(--shadow-2)]`}
+        } w-[min(13rem,calc(100vw-2rem))] flex-col gap-2 rounded border border-[var(--color-line)] bg-[color-mix(in_srgb,var(--color-bg1)_94%,transparent)] p-2 shadow-[var(--shadow-2)]`}
       >
         <ul className="flex flex-col gap-1">
           {(Object.keys(LAYER_GL) as (keyof LayerFlags)[]).map((k) => (

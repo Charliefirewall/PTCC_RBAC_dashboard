@@ -16,8 +16,9 @@
  *        coordinates and records. The action vocabulary here reflects that.
  */
 
-import { useMemo, useState, type ReactNode } from 'react';
-import { useAlerts, useComms, useEvents, useSelection, useSettings, useSim } from '../../store';
+import { useTx } from '../../i18n/t';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useAlerts, useComms, useEvents, useSelection, useSettings, useSim, world } from '../../store';
 import { useForecast } from '../../store/forecast';
 import { HORIZONS, type Horizon } from '../../rules/forecast';
 import { can } from '../roles/roles';
@@ -32,6 +33,7 @@ import type {
   EmergencyEvent,
   EventCategory,
   EventSeverity,
+  HistoricalAlertRecord,
   PlaybookId,
   Severity,
   WorkflowStage,
@@ -45,7 +47,7 @@ import {
   playbookFor,
   suggestSeverity,
 } from '../../rules/playbooks';
-import { hhmm, hhmmss, simSecondsOf } from '../../sim/engine';
+import { hhmm, hhmmss, isoAt, simSecondsOf } from '../../sim/engine';
 import type { I18nKey } from '../../i18n/dict';
 import { t as tr, useT } from '../../i18n/t';
 import {
@@ -62,6 +64,8 @@ import {
 import { Icon } from '../../components/Icon';
 import AgentConsole, { AlertDecisionBadge } from '../agentic/AgentConsole';
 import { overlay } from '../../store/overlay';
+import { filterAlerts, filterHistory, presetRange, type AlertFilters, type DatePreset } from './filtering';
+import { useAccessibleTabs } from '../../components/AccessibleTabs';
 
 const ALERT_TYPES: AlertType[] = [
   'service_deviation',
@@ -140,14 +144,17 @@ const MAX_AUDIT_ROWS = 200;
 export default function Alerts() {
   const t = useT();
   const [tab, setTab] = useState<'alerts' | 'forecast' | 'events' | 'agents'>('alerts');
+  const tabIds = ['alerts', 'forecast', 'events', 'agents'] as const;
+  const tabs = useAccessibleTabs(tabIds, tab, setTab, 'alerts-workspace');
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      <div className="flex shrink-0 items-center gap-2">
+      <div role="tablist" aria-label={t('nav.alerts')} className="flex shrink-0 items-center gap-2 overflow-x-auto">
         {/* Plain tabs: the two scales must LOOK different, so each tab carries its own
             severity family rather than a shared neutral chrome. */}
         <button
           type="button"
+          {...tabs.getTabProps('alerts')}
           onClick={() => setTab('alerts')}
           className={`flex items-center gap-2 rounded-t border-b-2 px-3 py-1.5 text-[12px] font-semibold ${
             tab === 'alerts'
@@ -161,6 +168,7 @@ export default function Alerts() {
         {/* PTCC scenario 2: same table, forecast rows, different colour. */}
         <button
           type="button"
+          {...tabs.getTabProps('forecast')}
           data-tab="forecast"
           onClick={() => setTab('forecast')}
           className={`flex items-center gap-2 rounded-t border-b-2 px-3 py-1.5 text-[12px] font-semibold ${
@@ -174,6 +182,7 @@ export default function Alerts() {
         </button>
         <button
           type="button"
+          {...tabs.getTabProps('events')}
           onClick={() => setTab('events')}
           className={`flex items-center gap-2 rounded-t border-b-2 px-3 py-1.5 text-[12px] font-semibold ${
             tab === 'events'
@@ -192,6 +201,7 @@ export default function Alerts() {
             this" is never confused with either severity scale. */}
         <button
           type="button"
+          {...tabs.getTabProps('agents')}
           onClick={() => setTab('agents')}
           className={`flex items-center gap-2 rounded-t border-b-2 px-3 py-1.5 text-[12px] font-semibold ${
             tab === 'agents'
@@ -206,10 +216,12 @@ export default function Alerts() {
           />
           {t('ag.tab')}
         </button>
-        <span className="ml-auto text-[10px] text-[var(--color-text3)]">{t('alerts.scalesNote')}</span>
+        <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text3)]">{t('alerts.scalesNote')}</span>
       </div>
 
-      {tab === 'alerts' ? <AlertsTab /> : tab === 'forecast' ? <ForecastTab /> : tab === 'events' ? <EventsTab /> : <AgentsTab />}
+      <div {...tabs.getPanelProps(tab)} className="flex min-h-0 flex-1 flex-col focus:outline-none">
+        {tab === 'alerts' ? <AlertsTab /> : tab === 'forecast' ? <ForecastTab /> : tab === 'events' ? <EventsTab /> : <AgentsTab />}
+      </div>
     </div>
   );
 }
@@ -237,20 +249,60 @@ function AgentsTab() {
 function AlertsTab() {
   const t = useT();
   const alerts = useAlerts((s) => s.alerts);
+  const history = useAlerts((s) => s.history);
   const now_s = useSim((s) => s.snap?.sim_time_s ?? 0);
   const [sev, setSev] = useState<Severity | 'all'>('all');
   const [type, setType] = useState<AlertType | 'all'>('all');
+  const [vehicle, setVehicle] = useState('');
+  const [preset, setPreset] = useState<DatePreset>('today');
+  const initialRange = presetRange('today', isoAt(now_s));
+  const [startDate, setStartDate] = useState(initialRange.startDate);
+  const [endDate, setEndDate] = useState(initialRange.endDate);
+  const [showMore, setShowMore] = useState(false);
+  const [historyPage, setHistoryPage] = useState(0);
+  const historyPageSize = 20;
+
+  const filters: AlertFilters = { severity: sev, type, vehicle, startDate, endDate };
 
   // already sorted by impact_score upstream - filtering preserves that order
-  const rows = useMemo(
-    () => alerts.filter((a) => (sev === 'all' || a.severity === sev) && (type === 'all' || a.type === type)),
-    [alerts, sev, type],
+  const rows = useMemo(() => filterAlerts(alerts, filters), [alerts, sev, type, vehicle, startDate, endDate]);
+  const historicalRows = useMemo(
+    () => filterHistory(history, filters),
+    [history, sev, type, vehicle, startDate, endDate],
   );
   const groups = useMemo(() => buildWorklist(rows), [rows]);
+  const historyPages = Math.max(1, Math.ceil(historicalRows.length / historyPageSize));
+  const safeHistoryPage = Math.min(historyPage, historyPages - 1);
+  const shownHistory = historicalRows.slice(safeHistoryPage * historyPageSize, (safeHistoryPage + 1) * historyPageSize);
+
+  useEffect(() => setHistoryPage(0), [sev, type, vehicle, startDate, endDate]);
+
+  const applyPreset = (next: Exclude<DatePreset, 'custom'>) => {
+    const range = presetRange(next, isoAt(now_s));
+    setPreset(next);
+    setStartDate(range.startDate);
+    setEndDate(range.endDate);
+  };
+  const resetFilters = () => {
+    const range = presetRange('today', isoAt(now_s));
+    setSev('all');
+    setType('all');
+    setVehicle('');
+    setPreset('today');
+    setStartDate(range.startDate);
+    setEndDate(range.endDate);
+    setShowMore(false);
+  };
+  const activeFilters = [
+    sev !== 'all' ? `${t('alerts.filterSeverity')}: ${t(`sev.${sev}` as I18nKey)}` : null,
+    vehicle.trim() ? `${t('alerts.filterVehicle')}: ${vehicle.trim()}` : null,
+    type !== 'all' ? `${t('alerts.filterType')}: ${t(`alerts.type.${type}` as I18nKey)}` : null,
+    preset !== 'today' ? `${t('alerts.dateRange')}: ${preset === 'custom' ? `${startDate} – ${endDate}` : t(`alerts.date.${preset}` as I18nKey)}` : null,
+  ].filter((value): value is string => !!value);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      <div className="panel flex shrink-0 flex-wrap items-center gap-3 px-3 py-2">
+      <div className="panel flex shrink-0 flex-wrap items-center gap-2 px-3 py-2" aria-label={t('alerts.filters')}>
         <span className="panel-title">{t('alerts.filters')}</span>
         <select
           aria-label={t('alerts.filterSeverity')}
@@ -265,6 +317,41 @@ function AlertsTab() {
             </option>
           ))}
         </select>
+        <input
+          type="search"
+          aria-label={t('alerts.filterVehicle')}
+          placeholder={t('alerts.vehiclePlaceholder')}
+          className={`${INPUT} w-32`}
+          value={vehicle}
+          onChange={(e) => setVehicle(e.target.value)}
+          data-alert-vehicle-filter=""
+        />
+        <div role="group" className="flex overflow-x-auto rounded border border-[var(--color-line)]" aria-label={t('alerts.dateRange')}>
+          {(['today', 'yesterday', '7d', '30d'] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={`px-2 py-1 text-[10px] ${preset === p ? 'bg-[var(--color-accent)] text-[var(--color-on-accent)]' : 'text-[var(--color-text2)]'}`}
+              onClick={() => applyPreset(p)}
+              aria-pressed={preset === p}
+              data-date-preset={p}
+            >
+              {t(`alerts.date.${p}` as I18nKey)}
+            </button>
+          ))}
+        </div>
+        <button type="button" className={`${BTN} md:hidden`} aria-expanded={showMore} aria-controls="alert-more-filters" onClick={() => setShowMore((value) => !value)}>
+          {showMore ? t('alerts.lessFilters') : t('alerts.moreFilters')}
+        </button>
+        <div id="alert-more-filters" className={`${showMore ? 'flex' : 'hidden'} basis-full flex-wrap items-center gap-2 md:flex md:basis-auto`}>
+        <label className="flex items-center gap-1 text-[10px] text-[var(--color-text3)]">
+          {t('alerts.startDate')}
+          <input type="date" className={`${INPUT} w-auto`} value={startDate} onChange={(e) => { setStartDate(e.target.value); setPreset('custom'); }} />
+        </label>
+        <label className="flex items-center gap-1 text-[10px] text-[var(--color-text3)]">
+          {t('alerts.endDate')}
+          <input type="date" className={`${INPUT} w-auto`} value={endDate} onChange={(e) => { setEndDate(e.target.value); setPreset('custom'); }} />
+        </label>
         <select
           aria-label={t('alerts.filterType')}
           className={`${INPUT} w-auto`}
@@ -278,11 +365,18 @@ function AlertsTab() {
             </option>
           ))}
         </select>
+        </div>
         <span className="num text-[11px] text-[var(--color-text2)]">{t('alerts.count', { n: num(rows.length) })}</span>
         <span className="ml-auto flex items-center gap-2">
           <EvidenceTag label="CONFIRMED" cite="L1175" />
           <span className="text-[10px] text-[var(--color-text3)]">{t('alerts.ruleDerived')}</span>
         </span>
+        {activeFilters.length ? (
+          <div className="flex basis-full flex-wrap items-center gap-1" aria-label={t('alerts.activeFilters')}>
+            {activeFilters.map((filter) => <span key={filter} className="rounded-full bg-[var(--color-bg3)] px-2 py-0.5 text-[10px] text-[var(--color-text2)]">{filter}</span>)}
+            <button type="button" className={`${BTN} ml-1`} onClick={resetFilters}>{t('alerts.resetFilters')}</button>
+          </div>
+        ) : null}
       </div>
 
       <Panel
@@ -304,6 +398,120 @@ function AlertsTab() {
             ) : null}
           </ul>
         )}
+      </Panel>
+
+      <Panel
+        titleKey="alerts.history"
+        className="max-h-[34%] min-h-[130px] shrink-0"
+        right={<span className="t-meta">{t('alerts.historyCount', { n: historicalRows.length })}</span>}
+      >
+        <p className="t-meta border-b border-[var(--color-line)] px-3 py-1.5">{t('alerts.historySession')}</p>
+        {historicalRows.length === 0 ? (
+          <Empty title={t('alerts.noHistory')} text={t('alerts.noHistoryHint')} />
+        ) : (
+          <>
+            <ul data-alert-history="" className="overflow-auto">
+              {shownHistory.map((record) => <HistoricalAlertRow key={`${record.alert.id}:${record.alert.raised_at_s}`} record={record} />)}
+            </ul>
+            {historyPages > 1 ? (
+              <nav aria-label={t('alerts.historyPages')} className="t-meta flex items-center justify-between gap-2 border-t border-[var(--color-line)] px-3 py-1.5">
+                <span aria-live="polite">{t('alerts.historyPage', { page: safeHistoryPage + 1, pages: historyPages })}</span>
+                <span className="flex gap-1">
+                  <button type="button" className={BTN} disabled={safeHistoryPage === 0} aria-describedby={safeHistoryPage === 0 ? 'history-first-page' : undefined} onClick={() => setHistoryPage((page) => Math.max(0, page - 1))}>{t('kit.page.prev')}</button>
+                  <button type="button" className={BTN} disabled={safeHistoryPage >= historyPages - 1} aria-describedby={safeHistoryPage >= historyPages - 1 ? 'history-last-page' : undefined} onClick={() => setHistoryPage((page) => Math.min(historyPages - 1, page + 1))}>{t('kit.page.next')}</button>
+                </span>
+                <span id="history-first-page" className="sr-only">{t('alerts.firstPage')}</span>
+                <span id="history-last-page" className="sr-only">{t('alerts.lastPage')}</span>
+              </nav>
+            ) : null}
+          </>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function HistoricalAlertRow({ record }: { record: HistoricalAlertRecord }) {
+  const t = useT();
+  const a = record.alert;
+  return (
+    <li className="flex items-center gap-2 border-b border-[var(--color-line)] px-3 py-2 last:border-0" data-historical-alert-row="">
+      <SeverityChip severity={a.severity} size="sm" />
+      <StatusPill tone="neutral">{t('alerts.resolved')}</StatusPill>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12px] font-medium">{t(a.title_key as I18nKey, a.params)}</span>
+        <span className="num block text-[10px] text-[var(--color-text3)]">
+          {a.vehicle_id ?? DASH} · {a.route_id ?? DASH} · {a.raised_at} → {record.resolved_at}
+        </span>
+      </span>
+      <button type="button" className={`${BTN} border-[var(--color-accent)] text-[var(--color-accent)]`} onClick={() => openHistoricalAlert(record)}>
+        {t('alerts.openHistory')} →
+      </button>
+    </li>
+  );
+}
+
+function openHistoricalAlert(record: HistoricalAlertRecord) {
+  const lang = useSettings.getState().lang;
+  overlay.openDrawer({
+    id: 'alerts.history',
+    title: tr('alerts.historyTitle', lang, { id: record.alert.id }),
+    sub: `${record.alert.vehicle_id ?? '—'} · ${record.alert.route_id ?? '—'} · ${tr('alerts.resolved', lang)}`,
+    wide: true,
+    body: <HistoricalAlertDrawer record={record} />,
+  });
+}
+
+function HistoricalAlertDrawer({ record }: { record: HistoricalAlertRecord }) {
+  const t = useT();
+  const v = record.vehicle;
+  const route = world.routeById.get(record.alert.route_id ?? v?.route_id ?? '');
+  const events = useEvents((s) => s.events.filter((e) => e.associated_alert_ids.includes(record.alert.id)));
+  const stopName = (stop_id: string | null | undefined) => {
+    const stop = route?.stops.find((s) => s.stop_id === stop_id);
+    return stop ? (useSettings.getState().lang === 'mn' ? stop.name_mn : stop.name_en) : (stop_id ?? DASH);
+  };
+  return (
+    <div className="flex flex-col gap-2" data-historical-alert-detail="">
+      <div className="rounded border-l-4 border-l-[var(--color-sev-warn)] bg-[var(--color-bg2)] p-3 text-[11px] text-[var(--color-text2)]">
+        <strong className="text-[var(--color-text1)]">{t('alerts.actualRecord')}</strong> · {t('alerts.actualRecordHint')}
+        <div className="mt-1">{t('alerts.resolutionSnapshot')}</div>
+      </div>
+      <Panel titleKey="alerts.operationalContext">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 p-3 md:grid-cols-3">
+          {([
+            [t('ev.f.bus_number'), v?.vehicle_id ?? record.alert.vehicle_id ?? DASH],
+            [t('ev.f.route_number'), v?.route_id ?? record.alert.route_id ?? DASH],
+            [t('ev.f.driver_id'), v?.driver_id ?? DASH],
+            [t('alerts.trip'), v?.trip_id ?? DASH],
+            [t('alerts.position'), v ? `${v.latitude.toFixed(5)}, ${v.longitude.toFixed(5)}` : DASH],
+            [t('veh.speed'), v ? `${v.speed_kmh.toFixed(1)} km/h` : DASH],
+            [t('alerts.deviation'), v ? `${(v.schedule_deviation_s / 60).toFixed(1)} min` : DASH],
+            [t('alerts.tripProgress'), v ? `${Math.round(v.trip_progress * 100)}%` : DASH],
+            [t('alerts.passengerLoad'), v ? `${Math.round(v.passenger_load_pct)}%` : DASH],
+            [t('alerts.nextStop'), stopName(v?.next_stop_id)],
+            [t('alerts.raised'), record.alert.raised_at],
+            [t('alerts.resolvedAt'), record.resolved_at],
+          ] as [string, string][]).map(([label, value]) => (
+            <div key={label} className="border-b border-[var(--color-line)] pb-1">
+              <dt className="panel-title">{label}</dt><dd className="num break-words text-[12px]">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </Panel>
+      <Panel titleKey="alerts.stopHistory">
+        {record.stops.length === 0 ? <Empty title={t('alerts.noStops')} text={t('alerts.noStopsHint')} /> : (
+          <div className="overflow-x-auto"><table className="w-full text-[11px]">
+            <thead><tr className="text-left text-[var(--color-text3)]"><th className="px-3 py-2">{t('alerts.stop')}</th><th>{t('alerts.scheduled')}</th><th>{t('alerts.actual')}</th><th>{t('alerts.deviation')}</th><th>{t('alerts.load')}</th></tr></thead>
+            <tbody>{record.stops.map((s) => <tr key={`${s.stop_id}:${s.t_s}`} className="border-t border-[var(--color-line)]"><td className="px-3 py-2">{stopName(s.stop_id)}</td><td className="num">{hhmm(s.t_s - s.dev_s)}</td><td className="num">{hhmm(s.t_s)}</td><td className="num">{`${s.dev_s >= 0 ? '+' : ''}${(s.dev_s / 60).toFixed(1)} min`}</td><td className="num">{s.pax}</td></tr>)}</tbody>
+          </table></div>
+        )}
+      </Panel>
+      <Panel titleKey="alerts.relatedEvidence">
+        <div className="grid gap-2 p-3 md:grid-cols-2">
+          <div><div className="panel-title">{t('alerts.relatedEvents')}</div>{events.length ? events.map((e) => <button key={e.event_id} type="button" className={`${BTN} mt-1 mr-1`} onClick={() => openEvent(e.event_id)}>{e.event_id} →</button>) : <p className="t-meta mt-1">{DASH}</p>}</div>
+          <div className="border-l-4 border-l-[var(--color-forecast)] pl-2"><div className="panel-title text-[var(--color-forecast)]">{t('alerts.historicalForecast')}</div>{record.forecasts.length ? record.forecasts.map((f) => <p key={f.horizon_min} className="num mt-1 text-[11px]">+{f.horizon_min} min · {Math.round(f.probability * 100)}% {t('alerts.chance')} · {Math.round(f.confidence * 100)}% {t('alerts.confidence')}</p>) : <p className="t-meta mt-1">{t('alerts.noHistoricalForecast')}</p>}</div>
+        </div>
       </Panel>
     </div>
   );
@@ -456,7 +664,8 @@ export function ruleLine(a: Alert, t: (k: I18nKey, p?: Record<string, string | n
     rule: str(a.rule_id),
     value: num(a.metric.value, (x) => String(sec ? Math.round(x / 60) : x)),
     threshold: num(a.metric.threshold, (x) => String(sec ? Math.round(x / 60) : x)),
-    unit: sec ? ' min' : (a.metric.unit ?? ''),
+    // a space before a unit word ("17.2 min"), none before % ("96%")
+    unit: sec ? ' min' : a.metric.unit && a.metric.unit !== '%' ? ` ${a.metric.unit}` : (a.metric.unit ?? ''),
   });
 }
 
@@ -597,7 +806,7 @@ function AlertRow({ r, now_s, count, inTail }: { r: Ranked; now_s: number; count
         {/* line 2 - metadata: type, subject, age, and the threshold that broke */}
         <div className="num mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--color-text2)]">
           <span className="break-words text-[var(--color-text3)]">
-            {t(('alerts.type.' + a.type) as I18nKey)} · {subject} · {t('alerts.age')} {age_min}m · {t('alerts.impact')}{' '}
+            {t(('alerts.type.' + a.type) as I18nKey)} · {subject} · {t('alerts.age')} {t('unit.ageMin', { n: age_min })} · {t('alerts.impact')}{' '}
             {num(a.impact_score)}
           </span>
           {a.forecast ? (
@@ -740,6 +949,7 @@ function ValidateBody({ alert_id }: { alert_id: string }) {
  */
 function ValidateForm({ live, seed }: { live: Alert | undefined; seed: Alert }) {
   const t = useT();
+  const tx = useTx();
   const alert = live ?? seed;
   const onClose = () => overlay.closeModal();
   const role = useSettings((s) => s.role);
@@ -768,7 +978,7 @@ function ValidateForm({ live, seed }: { live: Alert | undefined; seed: Alert }) 
         <div className="flex flex-wrap items-center gap-2 text-[12px]">
           <SeverityChip severity={alert.severity} size="sm" />
           <span className="min-w-0 break-words">{t(alert.title_key as I18nKey, alert.params)}</span>
-          <span className="num ml-auto text-[10px] text-[var(--color-text3)]">{alert.id}</span>
+          <span className="num ml-auto text-[10px] text-[var(--color-text3)]">{tx(alert.id)}</span>
         </div>
         {/* Live metric, rendered by the one shared helper so this dialog and every list
             print the same number for the same breached threshold. */}
@@ -819,6 +1029,8 @@ function ValidateForm({ live, seed }: { live: Alert | undefined; seed: Alert }) 
         <div className="grid grid-cols-2 gap-2">
           <Field label={t('ev.f.event_type')}>
             <input className={INPUT} value={event_type} onChange={(e) => setEventType(e.target.value)} />
+            {/* the code stays as typed (it is what gets saved); only its reading is shown */}
+            {tx(event_type) !== event_type ? <span className="t-meta">{tx(event_type)}</span> : null}
           </Field>
           <Field label={t('ev.f.category')}>
             <select className={INPUT} value={category} onChange={(e) => setCategory(e.target.value as EventCategory)}>
@@ -892,6 +1104,7 @@ function ValidateForm({ live, seed }: { live: Alert | undefined; seed: Alert }) 
 
 function EventsTab() {
   const t = useT();
+  const tx = useTx();
   const events = useEvents((s) => s.events);
   const selected_id = useSelection((s) => s.event_id);
   const selectEvent = useSelection((s) => s.selectEvent);
@@ -932,7 +1145,7 @@ function EventsTab() {
                     <EventSeverityBadge level={e.severity_level} size="sm" />
                     <span className="min-w-0 flex-1">
                       {/* event_type is free text an operator typed: it can be a paragraph. */}
-                      <span className="block truncate text-[12px]" title={e.event_type}>{str(e.event_type)}</span>
+                      <span className="block truncate text-[12px]" title={e.event_type}>{tx(str(e.event_type))}</span>
                       <span className="flex flex-wrap items-center gap-1 text-[10px] text-[var(--color-text3)]">
                         <span>{t(`ev.category.${e.category}` as I18nKey)}</span>
                         <span>·</span>
@@ -1033,6 +1246,7 @@ function completeOnce(event_id: string, action_id: string, role: string, label: 
 
 function EventDrawer({ ev }: { ev: EmergencyEvent }) {
   const t = useT();
+  const tx = useTx();
   const role = useSettings((s) => s.role);
 
   const i = WORKFLOW_STAGES.indexOf(ev.stage);
@@ -1045,7 +1259,7 @@ function EventDrawer({ ev }: { ev: EmergencyEvent }) {
     ['ev.f.event_id', str(ev.event_id)],
     // event_type and description are free text the operator typed: they can be empty,
     // and they can be very long. The <dd> below is `break-words`, so they wrap.
-    ['ev.f.event_type', str(ev.event_type)],
+    ['ev.f.event_type', tx(str(ev.event_type))],
     ['ev.f.category', t(`ev.category.${ev.category}` as I18nKey)],
     ['ev.f.severity_level', num(ev.severity_level)],
     ['ev.f.bus_number', str(ev.bus_number)],
@@ -1053,7 +1267,7 @@ function EventDrawer({ ev }: { ev: EmergencyEvent }) {
     ['ev.f.driver_id', str(ev.driver_id)],
     [
       'ev.f.location',
-      `${str(ev.location?.label)} (${num(ev.location?.latitude, (x) => x.toFixed(4))}, ${num(ev.location?.longitude, (x) => x.toFixed(4))})`,
+      `${tx(str(ev.location?.label))} (${num(ev.location?.latitude, (x) => x.toFixed(4))}, ${num(ev.location?.longitude, (x) => x.toFixed(4))})`,
     ],
     ['ev.f.timestamp', str(ev.timestamp)],
     ['ev.f.detection_source', str(ev.detection_source)],
@@ -1486,6 +1700,7 @@ function ManualBody() {
 
 function AuditPanel() {
   const t = useT();
+  const tx = useTx();
   const audit = useEvents((s) => s.audit);
   return (
     <Panel titleKey="ev.audit" right={<EvidenceTag label="CONFIRMED" cite="L1347" />} className="shrink-0">
@@ -1498,10 +1713,10 @@ function AuditPanel() {
           {audit.slice(0, MAX_AUDIT_ROWS).map((a, n) => (
             <li key={n} className="num flex flex-wrap items-baseline gap-2 border-b border-[var(--color-line)] py-1 text-[11px] last:border-0">
               <span className="text-[var(--color-text3)]">{num(simSecondsOf(a.at), hhmmss)}</span>
-              <span className="text-[var(--color-text2)]">{str(a.actor)}</span>
+              <span className="text-[var(--color-text2)]">{tx(str(a.actor))}</span>
               <span className="text-[10px] text-[var(--color-text3)]">({str(a.role)})</span>
-              <span className={a.action?.startsWith('OVERRIDE') ? 'font-bold text-[var(--color-sev-warn)]' : ''}>{str(a.action)}</span>
-              <span className="text-[var(--color-text2)]">{str(a.target)}</span>
+              <span className={a.action?.startsWith('OVERRIDE') ? 'font-bold text-[var(--color-sev-warn)]' : ''}>{tx(str(a.action))}</span>
+              <span className="text-[var(--color-text2)]">{tx(str(a.target))}</span>
               {a.detail ? <span className="min-w-0 break-words text-[var(--color-text3)]">— “{a.detail}”</span> : null}
             </li>
           ))}

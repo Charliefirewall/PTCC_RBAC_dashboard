@@ -12,6 +12,7 @@
  * the honesty requirement that makes the rest of the chart credible.
  */
 
+import { useTx } from '../../i18n/t';
 import { useEffect, useMemo } from 'react';
 import { AXIS, CHART_BASE, EChart } from '../../charts/EChart';
 import {
@@ -64,6 +65,7 @@ const STATE_LABEL: Record<
 
 export default function Regularity() {
   const t = useT();
+  const tx = useTx();
   const metrics = useSim((s) => s.metrics);
   const snap = useSim((s) => s.snap);
   const tick = useSim((s) => s.tick);
@@ -212,10 +214,10 @@ export default function Regularity() {
           const a = actual[i];
           const d = a !== null && a !== undefined && plannedMin !== null ? a - plannedMin : null;
           return [
-            `<b>${x[i]}</b>`,
-            `${t('reg.actual')}: ${fmt1(a)} min`,
-            `${t('reg.planned')}: ${fmt1(plannedMin)} min`,
-            `${t('uxreg.hw.diff')}: ${d === null ? EM_DASH : (d > 0 ? '+' : '') + d.toFixed(1)} min`,
+            `<b>${rm.route_id} · ${x[i]}</b>`,
+            `${t('reg.actual')}: ${fmt1(a)} ${t('unit.min')}`,
+            `${t('reg.planned')}: ${fmt1(plannedMin)} ${t('unit.min')}`,
+            `${t('uxreg.hw.diff')}: ${d === null ? EM_DASH : (d > 0 ? '+' : '') + d.toFixed(1)} ${t('unit.min')}`,
           ].join('<br/>');
         },
       },
@@ -253,6 +255,7 @@ export default function Regularity() {
       },
       series: [
         {
+          id: 'planned-headway',
           name: t('reg.planned'),
           type: 'line',
           data: x.map(() => plannedMin),
@@ -288,6 +291,7 @@ export default function Regularity() {
           },
         },
         {
+          id: 'actual-headway',
           name: t('reg.actual'),
           type: 'line',
           data: actual,
@@ -310,6 +314,10 @@ export default function Regularity() {
         : [],
     [snap, routeId],
   );
+  const stripVehicles = vehicles.map((v, i) => ({
+    v,
+    lane: vehicles.slice(0, i).filter((x) => Math.abs(x.trip_progress - v.trip_progress) < 0.015).length,
+  }));
 
   /*
    * Not a loading spinner: nothing is in flight. The simulation has simply not
@@ -352,7 +360,7 @@ export default function Regularity() {
             rows={topBunching}
             selected={routeId}
             threshold={th.schedule_deviation_s}
-            extra={(r) => `${intOr(r.bunching_count)} < ${intOr(th.bunching_min_headway_s / 60)} min`}
+            extra={(r) => `${intOr(r.bunching_count)} < ${intOr(th.bunching_min_headway_s / 60)} ${t('unit.min')}`}
             empty={{ title: t('reg.bunchEmptyTitle'), text: t('reg.bunchEmptyText'), tone: 'ok' }}
             open={false}
             summary={
@@ -364,11 +372,11 @@ export default function Regularity() {
             rows={gapRoutes}
             selected={routeId}
             threshold={th.schedule_deviation_s}
-            extra={(r) => `${intOr(r.max_gap_s / 60)} min`}
+            extra={(r) => `${intOr(r.max_gap_s / 60)} ${t('unit.min')}`}
             empty={{ title: t('reg.gapEmptyTitle'), text: t('reg.gapEmptyText'), tone: 'ok' }}
             open={false}
             summary={
-              gapRoutes.length ? `${gapRoutes.length} · ${intOr(gapRoutes[0]!.max_gap_s / 60)} min` : '0'
+              gapRoutes.length ? `${gapRoutes.length} · ${intOr(gapRoutes[0]!.max_gap_s / 60)} ${t('unit.min')}` : '0'
             }
           />
         </div>
@@ -390,10 +398,10 @@ export default function Regularity() {
             right={
               rm ? (
                 <span className="num t-meta min-w-0 truncate">
-                  {t('reg.planned')} {intOr(rm.planned_headway_s / 60)} min
+                  {t('reg.planned')} {intOr(rm.planned_headway_s / 60)} {t('unit.min')}
                   <span className="hidden xl:inline">
                     {' · '}
-                    {t('reg.avgDelay')} {minOr(rm.mean_dev_s)} min
+                    {t('reg.avgDelay')} {minOr(rm.mean_dev_s)} {t('unit.min')}
                   </span>
                 </span>
               ) : null
@@ -403,13 +411,18 @@ export default function Regularity() {
             {/* Three distinct states, and they are not the same sentence: no route
                 chosen, a route chosen whose ring has not filled yet, and the chart. */}
             {option ? (
-              <EChart option={option} />
+              <EChart option={option} ariaLabel={`${t('reg.headwayTitle', { route: rm?.route_id ?? '—' })} · ${t('reg.actual')} vs ${t('reg.planned')} · ${t('reg.headwayMin')} / ${t('uxreg.axis.time')}`} />
             ) : rm ? (
               <Empty title={t('reg.chartWarmTitle')} text={t('reg.chartWarmText', { route: rm.route_id })} />
             ) : (
               <Empty title={t('reg.selectRoute')} text={t('reg.chartEmptyText')} />
             )}
           </Panel>
+          {rm ? (
+            <p className="t-body shrink-0 border-l-2 border-[var(--color-accent)] pl-2 text-[var(--color-text1)]" data-regularity-insight>
+              {t('uxreg.routeInsight', { route: rm.route_id, gap: (rm.max_gap_s / 60).toFixed(1), planned: (rm.planned_headway_s / 60).toFixed(1), buses: vehicles.length, action: rm.max_gap_s > th.service_gap_max_s ? t('reg.serviceGaps') : t('legend.normal') })}
+            </p>
+          ) : null}
 
           {/* "String" strip: one marker per vehicle at its trip_progress, coloured by
               delay class. Bunching shows as clustered markers, a gap as empty track. */}
@@ -428,15 +441,24 @@ export default function Regularity() {
                 <Empty title={t('reg.selectRoute')} text={t('reg.stripNoRouteText')} />
               )
             ) : (
-              <div className="relative h-8 w-full rounded-full bg-[var(--color-bg3)]">
-                {vehicles.map((v) => (
+              <div>
+                <div className="mb-2 flex flex-wrap gap-3 t-meta" aria-label={t('uxreg.stripLegend')}>
+                  {([
+                    ['legend.normal', 'var(--color-sev-ok)'],
+                    ['legend.slower', 'var(--color-sev-warn)'],
+                    ['legend.disrupted', 'var(--color-sev-crit)'],
+                  ] as const).map(([key, color]) => <span key={key} className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />{t(key)}</span>)}
+                </div>
+              <div className="relative h-16 w-full rounded-md bg-[var(--color-bg3)]">
+                {stripVehicles.map(({ v, lane }) => (
                   <span
                     key={v.vehicle_id}
-                    className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2"
+                    className="absolute -translate-x-1/2 -translate-y-1/2"
                     style={{
                       // 0..1 mapped into a 2%..98% inset: a marker at either end of the
                       // trip would otherwise hang half outside the rounded track.
                       left: `${2 + v.trip_progress * 96}%`,
+                      top: `${16 + Math.min(3, lane) * 11}px`,
                       zIndex: 'var(--z-raised)',
                     }}
                   >
@@ -462,6 +484,7 @@ export default function Regularity() {
                   </span>
                 ))}
               </div>
+              </div>
             )}
           </Panel>
         </div>
@@ -474,7 +497,7 @@ export default function Regularity() {
         {/* Wraps rather than truncates: a disclosure the plan makes mandatory is the one
             string on the screen that may never be cut off mid-sentence. */}
         <span className="min-w-0">{t('reg.timetableNote')}</span>
-        <span className="ml-auto hidden shrink-0 opacity-60 xl:inline">{TIMETABLE_PROVENANCE}</span>
+        <span className="ml-auto hidden shrink-0 opacity-60 xl:inline">{tx(TIMETABLE_PROVENANCE)}</span>
       </footer>
     </div>
   );

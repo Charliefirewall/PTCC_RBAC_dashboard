@@ -160,17 +160,36 @@ export default function Operators() {
     () => ({
       ...CHART_BASE,
       legend: { top: 0 },
-      grid: { ...CHART_BASE.grid, top: 28, right: 44 },
-      xAxis: { ...AXIS, type: 'category', data: rows.map((r) => r.id) },
+      grid: { ...CHART_BASE.grid, top: 28, right: 18, bottom: 8 },
+      tooltip: {
+        ...CHART_BASE.tooltip,
+        formatter: (ps: { dataIndex: number; seriesIndex: number; value: number; marker: string }[]) => {
+          const i = ps[0]?.dataIndex ?? 0;
+          const op = rows[i]?.id ?? '—';
+          return [
+            `<b>${t('chart.tooltip.operator', { operator: op })}</b>`,
+            ...ps.map((p) => p.seriesIndex === 0
+              ? `${p.marker}${t('op.serviceKm')}: ${Number(p.value).toFixed(0)} ${t('unit.km')}`
+              : `${p.marker}${t('widget.onTime')}: ${Number(p.value).toFixed(1)}%`),
+          ].join('<br/>');
+        },
+      },
+      xAxis: { ...AXIS, type: 'category', data: rows.map((r) => r.id), name: t('chart.axis.operator'), nameLocation: 'middle', nameGap: 24 },
       yAxis: [
-        { ...AXIS, type: 'value', name: 'km' },
-        { ...AXIS, type: 'value', name: '%', max: 100, splitLine: { show: false } },
+        { ...AXIS, type: 'value', name: `${t('op.serviceKm')} (${t('unit.km')})`, nameLocation: 'middle', nameGap: 38 },
+        { ...AXIS, type: 'value', name: t('chart.axis.onTimePct'), nameLocation: 'middle', nameGap: 40, max: 100, splitLine: { show: false } },
       ],
       series: [
         // An operator with no data is a MISSING bar (null), not a zero-height one and
         // certainly not a full-height 100 %.
-        { name: t('op.serviceKm'), type: 'bar', data: rows.map((r) => (Number.isFinite(r.km) ? Math.round(r.km) : null)), itemStyle: { color: cssVar('--color-accent', '#4d8df0') }, barMaxWidth: 36 },
-        { name: t('widget.onTime'), type: 'bar', yAxisIndex: 1, data: rows.map((r) => (r.on_time_known ? Number(r.on_time_pct.toFixed(1)) : null)), itemStyle: { color: cssVar('--color-sev-ok', '#37b978') }, barMaxWidth: 36 },
+        { id: 'service-km', name: t('op.serviceKm'), type: 'bar', data: rows.map((r) => (Number.isFinite(r.km) ? Math.round(r.km) : null)), itemStyle: { color: cssVar('--color-accent', '#4d8df0') }, barMaxWidth: 36 },
+        {
+          id: 'on-time',
+          name: t('widget.onTime'), type: 'bar', yAxisIndex: 1,
+          data: rows.map((r) => (r.on_time_known ? Number(r.on_time_pct.toFixed(1)) : null)),
+          itemStyle: { color: cssVar('--color-sev-ok', '#37b978') }, barMaxWidth: 36,
+          markLine: { silent: true, symbol: 'none', lineStyle: { color: cssVar('--color-sev-warn', '#e0a02e'), type: 'dashed', width: 1 }, label: { formatter: '90%', fontSize: 9 }, data: [{ yAxis: 90 }] },
+        },
       ],
     }),
     [rows, t, theme],
@@ -183,6 +202,7 @@ export default function Operators() {
   if (!snap || !metrics) return <Empty title={t('mod.warmingTitle')} text={t('op.warmingText')} />;
 
   const total = rows.reduce((s, r) => s + r.revenue, 0);
+  const weakest = rows.filter((r) => r.on_time_known).sort((a, b) => a.on_time_pct - b.on_time_pct)[0];
   /* One column set, both ranking panels. They were byte-identical markup twice. */
   const revenueCols: Column<RevenueRow>[] = [
     { key: 'route', label: t('reg.route'), mono: true, sortable: true, sortValue: ([id]) => id, render: ([id]) => id },
@@ -202,7 +222,7 @@ export default function Operators() {
 
       <div className="grid shrink-0 grid-cols-2 gap-2 lg:grid-cols-4">
         <KpiTile labelKey="op.totalKm" value={compactOr(rows.reduce((s, r) => s + r.km, 0))} evidence="CONFIRMED" />
-        <KpiTile labelKey="op.revenue" value={mntOr(total)} evidence="CONFIRMED" sub={`${t('evidence.ASSUMPTION')}: ${FARE_MNT} ₮ / boarding`} />
+        <KpiTile labelKey="op.revenue" value={mntOr(total)} evidence="CONFIRMED" sub={`${t('evidence.ASSUMPTION')}: ${t('op.farePerBoarding', { fare: FARE_MNT })}`} />
         <KpiTile labelKey="kpi.ridershipToday" value={compactOr(metrics.ridership_today)} evidence="CONFIRMED" />
         <KpiTile labelKey="op.interruptions" value={intOr(rows.reduce((s, r) => s + r.interruptions, 0))} tone="warn" evidence="CONFIRMED" />
       </div>
@@ -212,6 +232,11 @@ export default function Operators() {
         <EvidenceTag label="ASSUMPTION" cite="R992" />
         {t('op.fareNote')}
       </p>
+      {weakest ? (
+        <p className="t-body shrink-0 border-l-2 border-[var(--color-accent)] pl-2 text-[var(--color-text1)]" data-operator-insight>
+          {t('uxreg.operatorInsight', { operator: weakest.id, pct: weakest.on_time_pct.toFixed(1), interruptions: weakest.interruptions })}
+        </p>
+      ) : null}
 
       {/* Operators side by side. The role filter (R2627-R2642 / L718) is what can make
           this list short - and, if a future role matches no operator at all, empty. The
@@ -266,7 +291,7 @@ export default function Operators() {
 
       <div className="grid shrink-0 grid-cols-1 gap-2 lg:grid-cols-3">
         <Panel titleKey="op.kmVsOnTime" className="h-[280px] lg:col-span-2" right={<EvidenceTag label="CONFIRMED" cite="R931" />} bodyClassName="p-1">
-          <EChart option={chartOption} />
+          <EChart option={chartOption} ariaLabel={`${t('op.kmVsOnTime')} · ${t('op.serviceKm')} and ${t('widget.onTime')} by ${t('chart.axis.operator')}`} />
         </Panel>
 
         <Panel titleKey="op.topRevenue" className="h-[280px]" right={<EvidenceTag label="CONFIRMED" cite="R1233–R1236" />}>

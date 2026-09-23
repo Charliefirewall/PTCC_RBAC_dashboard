@@ -232,6 +232,37 @@ export interface Alert {
   auto_comm_id?: string;
 }
 
+/**
+ * Immutable evidence captured when an actual alert clears. Forecast rows never enter
+ * this record: predictions have their own store and visual family.
+ */
+export interface HistoricalAlertRecord {
+  alert: Alert;
+  resolved_at: string;
+  resolved_at_s: number;
+  vehicle?: {
+    vehicle_id: string;
+    route_id: string;
+    driver_id: string;
+    latitude: number;
+    longitude: number;
+    speed_kmh: number;
+    schedule_deviation_s: number;
+    passenger_load_pct: number;
+    trip_id: string;
+    trip_progress: number;
+    next_stop_id: string | null;
+  };
+  stops: StopArrival[];
+  /** Forecasts visible at resolution, retained as predictions rather than observations. */
+  forecasts: Array<{
+    horizon_min: number;
+    probability: number;
+    confidence: number;
+    expected_deviation_s: number;
+  }>;
+}
+
 // ---------------------------------------------------------------- events (5 levels)
 
 /** R1433-R1440 Table 16, five levels. R1041: severity_level integer 1..5. */
@@ -360,6 +391,25 @@ export interface CoordinationMessage {
   /** E3: SIMULATED reply from the recipient (TCC) - no real PTCC-TCC link exists (R967). */
   acknowledged_at?: string;
   ack_text?: string;
+  /** Why this message exists. Analytics proposals are not confirmed L3 incidents. */
+  provenance?: 'sop_l3' | 'analytics_proactive' | 'manual';
+  /** Keeps a forward-looking proposal visibly and audibly separate from an actual escalation. */
+  intent?: 'actual_l3_escalation' | 'proactive_proposal' | 'escalation_request' | 'coordination';
+  /** Human-readable, traceable basis for a proposed coordination request. */
+  reason?: string;
+  /** Deterministic facts used to support the proposal (never an invented policy). */
+  evidence?: string[];
+  /** The action Operations is being asked to consider. */
+  recommended_action?: string;
+  /** Selection/risk context carried from Analytics into Communications. */
+  context?: {
+    route_id?: string;
+    segment_id?: string;
+    day?: string;
+    time_window?: string;
+    start_time?: string;
+    expected_impact?: string;
+  };
 }
 
 // ---------------------------------------------------------------- roles

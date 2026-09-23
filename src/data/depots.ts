@@ -41,11 +41,11 @@ export interface Depot {
 }
 
 export const DEPOTS: Depot[] = [
-  { id: 'd-tolgoit', name_en: 'Tolgoit Depot', name_mn: 'Толгойт депо', node_id: 'n-tolgoit', district: 'Songino Khairkhan', operator_id: 'A', workshop_hours_per_week: 320 },
-  { id: 'd-dragon', name_en: 'Dragon Depot', name_mn: 'Драгон депо', node_id: 'n-dragon', district: 'Songino Khairkhan', operator_id: 'A', workshop_hours_per_week: 330 },
-  { id: 'd-amgalan', name_en: 'Amgalan Depot', name_mn: 'Амгалан депо', node_id: 'n-amgalan', district: 'Bayanzurkh', operator_id: 'B', workshop_hours_per_week: 300 },
-  { id: 'd-uliastai', name_en: 'Uliastai Depot', name_mn: 'Улиастай депо', node_id: 'n-tolgoit-e', district: 'Bayanzurkh', operator_id: 'B', workshop_hours_per_week: 250 },
-  { id: 'd-yarmag', name_en: 'Yarmag Depot', name_mn: 'Ярмаг депо', node_id: 'n-yarmag', district: 'Khan-Uul', operator_id: 'C', workshop_hours_per_week: 310 },
+  { id: 'd-tolgoit', name_en: 'Tolgoit Depot', name_mn: 'Толгойт бааз', node_id: 'n-tolgoit', district: 'Songino Khairkhan', operator_id: 'A', workshop_hours_per_week: 320 },
+  { id: 'd-dragon', name_en: 'Dragon Depot', name_mn: 'Драгон бааз', node_id: 'n-dragon', district: 'Songino Khairkhan', operator_id: 'A', workshop_hours_per_week: 330 },
+  { id: 'd-amgalan', name_en: 'Amgalan Depot', name_mn: 'Амгалан бааз', node_id: 'n-amgalan', district: 'Bayanzurkh', operator_id: 'B', workshop_hours_per_week: 300 },
+  { id: 'd-uliastai', name_en: 'Uliastai Depot', name_mn: 'Улиастай бааз', node_id: 'n-tolgoit-e', district: 'Bayanzurkh', operator_id: 'B', workshop_hours_per_week: 250 },
+  { id: 'd-yarmag', name_en: 'Yarmag Depot', name_mn: 'Ярмаг бааз', node_id: 'n-yarmag', district: 'Khan-Uul', operator_id: 'C', workshop_hours_per_week: 310 },
 ];
 
 export const DEPOT_BY_ID = new Map(DEPOTS.map((d) => [d.id, d]));

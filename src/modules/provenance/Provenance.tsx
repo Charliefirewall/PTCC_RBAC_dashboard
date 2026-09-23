@@ -15,14 +15,15 @@
  * so the page cannot drift from the build the way a slide would.
  */
 
+import { useTx } from '../../i18n/t';
 import { useMemo } from 'react';
-import { Button, EvidenceTag, KpiTile, Panel, fmtInt } from '../../components/primitives';
+import { Button, Callout, EvidenceTag, KpiTile, Panel, fmtInt } from '../../components/primitives';
 import { useT, unreviewedKeys, useLang } from '../../i18n/t';
 import { dict, type I18nKey } from '../../i18n/dict';
 import { DEMO_DEFAULTS, THRESHOLD_META, type Thresholds } from '../../rules/thresholds';
 import { TIMETABLE_PROVENANCE } from '../../sim/timetable';
 
-type Row = { what: string; cite: string; today: string; question: string; decision: string };
+type Row = { what: string; cite: string; today: string; question: string; decision: string; priority: 'P0' | 'P1' | 'P2'; owner: I18nKey; blocked: I18nKey };
 
 /**
  * Parameters in Tables 9-14 for which the source states a numeric value.
@@ -46,14 +47,15 @@ const NOT_BUILT: I18nKey[] = [
 ];
 
 
-function valueOf(k: keyof Thresholds): string {
+function valueOf(k: keyof Thresholds, tx: (s: string) => string = (s) => s): string {
   const v = DEMO_DEFAULTS[k];
   const unit = THRESHOLD_META[k].unit;
-  return Array.isArray(v) ? v.join(', ') : `${v}${unit ? ` ${unit}` : ''}`;
+  return Array.isArray(v) ? v.map(tx).join(', ') : `${v}${unit ? ` ${tx(unit)}` : ''}`;
 }
 
 export default function Provenance() {
   const t = useT();
+  const tx = useTx();
   const lang = useLang();
 
   const unreviewed = useMemo(() => unreviewedKeys().length, []);
@@ -66,6 +68,7 @@ export default function Provenance() {
       today: t('pv.a1.today', { n: PARAM_KEYS.length, d: PARAM_KEYS.length - SOURCE_VALUED_PARAMS }),
       question: t('pv.a1.q'),
       decision: t('pv.a1.d'),
+      priority: 'P0', owner: 'support.pv.owner.ptpd', blocked: 'support.pv.block.analytics',
     },
     {
       what: t('pv.a2.what'),
@@ -73,6 +76,7 @@ export default function Provenance() {
       today: t('pv.a2.today'),
       question: t('pv.a2.q'),
       decision: t('pv.a2.d'),
+      priority: 'P0', owner: 'support.pv.owner.data', blocked: 'support.pv.block.timetable',
     },
     {
       what: t('pv.a3.what'),
@@ -80,6 +84,7 @@ export default function Provenance() {
       today: t('pv.a3.today'),
       question: t('pv.a3.q'),
       decision: t('pv.a3.d'),
+      priority: 'P1', owner: 'support.pv.owner.operators', blocked: 'support.pv.block.maintenance',
     },
     {
       what: t('pv.a4.what'),
@@ -87,6 +92,7 @@ export default function Provenance() {
       today: t('pv.a4.today'),
       question: t('pv.a4.q'),
       decision: t('pv.a4.d'),
+      priority: 'P0', owner: 'support.pv.owner.data', blocked: 'support.pv.block.integration',
     },
     {
       what: t('pv.a5.what'),
@@ -94,6 +100,7 @@ export default function Provenance() {
       today: t('pv.a5.today'),
       question: t('pv.a5.q'),
       decision: t('pv.a5.d'),
+      priority: 'P1', owner: 'support.pv.owner.ptpd', blocked: 'support.pv.block.integration',
     },
     {
       what: t('pv.a6.what'),
@@ -101,6 +108,7 @@ export default function Provenance() {
       today: t('pv.a6.today', { n: unreviewed, total: totalKeys }),
       question: t('pv.a6.q'),
       decision: t('pv.a6.d'),
+      priority: 'P2', owner: 'support.pv.owner.comms', blocked: 'support.pv.block.language',
     },
   ];
 
@@ -122,6 +130,9 @@ export default function Provenance() {
         bodyClassName="p-3"
       >
         <p className="t-body max-w-[110ch] text-[var(--color-text2)]">{t('pv.lede')}</p>
+        <Callout kind="warn" className="mt-3" title={t('support.pv.priority')}>
+          {t('support.pv.summary')}
+        </Callout>
 
         <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <KpiTile labelKey="pv.kpiOpen" value={rows.length} tone="warn" evidence="CONFIRMED" />
@@ -131,7 +142,7 @@ export default function Provenance() {
         </div>
 
         <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[900px] border-collapse text-left">
+          <table className="w-full min-w-[1350px] border-collapse text-left">
             <thead>
               <tr className="t-meta uppercase tracking-wider text-[var(--color-text3)]">
                 <Th>{t('pv.colAbsence')}</Th>
@@ -139,16 +150,22 @@ export default function Provenance() {
                 <Th>{t('pv.colToday')}</Th>
                 <Th>{t('pv.colQuestion')}</Th>
                 <Th>{t('pv.colDecision')}</Th>
+                <Th>{t('support.pv.priority')}</Th>
+                <Th>{t('support.pv.owner')}</Th>
+                <Th>{t('support.pv.blocked')}</Th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i} className="border-t border-[var(--color-line)] align-top">
                   <Td className="w-[26%] font-medium text-[var(--color-text1)]">{r.what}</Td>
-                  <Td className="w-[14%] text-[var(--color-text3)]">{r.cite}</Td>
+                  <Td className="w-[14%] text-[var(--color-text3)]">{tx(r.cite)}</Td>
                   <Td className="w-[20%] text-[var(--color-text2)]">{r.today}</Td>
                   <Td className="w-[22%] text-[var(--color-accent)]">{r.question}</Td>
                   <Td className="w-[18%] text-[var(--color-text2)]">{r.decision}</Td>
+                  <Td className="font-semibold text-[var(--color-sev-warn)]">{r.priority}</Td>
+                  <Td className="text-[var(--color-text2)]">{t(r.owner)}</Td>
+                  <Td className="text-[var(--color-text2)]">{t(r.blocked)}</Td>
                 </tr>
               ))}
             </tbody>
@@ -177,10 +194,10 @@ export default function Provenance() {
               {PARAM_KEYS.map((k) => (
                 <tr key={k} className="border-t border-[var(--color-line)]">
                   <Td className="text-[var(--color-text1)]">{t(THRESHOLD_META[k].labelKey as I18nKey)}</Td>
-                  <Td className="t-meta">{THRESHOLD_META[k].table}</Td>
-                  <Td className="num text-[var(--color-text2)]">{valueOf(k)}</Td>
+                  <Td className="t-meta">{tx(THRESHOLD_META[k].table)}</Td>
+                  <Td className="num text-[var(--color-text2)]">{valueOf(k, tx)}</Td>
                   <Td className={THRESHOLD_META[k].sourceValue ? '' : 'text-[var(--color-sev-warn)]'}>
-                    {THRESHOLD_META[k].sourceValue ?? t('pv.noneInSource')}
+                    {THRESHOLD_META[k].sourceValue ? tx(THRESHOLD_META[k].sourceValue) : t('pv.noneInSource')}
                   </Td>
                 </tr>
               ))}
@@ -230,9 +247,9 @@ function exportQuestionnaire(rows: Row[], lang: string, t: (k: I18nKey, p?: Reco
     '',
     `_Generated from the PTCC demo build on ${new Date().toISOString().slice(0, 10)} · language: ${lang}_`,
     '',
-    `| # | ${t('pv.colAbsence')} | ${t('pv.colCite')} | ${t('pv.colToday')} | ${t('pv.colQuestion')} | ${t('pv.colDecision')} |`,
-    '|---|---|---|---|---|---|',
-    ...rows.map((r, i) => `| ${i + 1} | ${esc(r.what)} | ${esc(r.cite)} | ${esc(r.today)} | ${esc(r.question)} | ${esc(r.decision)} |`),
+    `| # | ${t('pv.colAbsence')} | ${t('pv.colCite')} | ${t('pv.colToday')} | ${t('pv.colQuestion')} | ${t('pv.colDecision')} | ${t('support.pv.priority')} | ${t('support.pv.owner')} | ${t('support.pv.blocked')} |`,
+    '|---|---|---|---|---|---|---|---|---|',
+    ...rows.map((r, i) => `| ${i + 1} | ${esc(r.what)} | ${esc(r.cite)} | ${esc(r.today)} | ${esc(r.question)} | ${esc(r.decision)} | ${r.priority} | ${esc(t(r.owner))} | ${esc(t(r.blocked))} |`),
     '',
     `## ${t('pv.thTitle')}`,
     '',
