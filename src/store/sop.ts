@@ -37,6 +37,9 @@ export function runSop(alerts: Alert[], now_s: number): Alert[] {
   const comms = useComms.getState();
   const { l1_auto_exec: auto, lang } = useSettings.getState();
   let out = alerts;
+  // One Traffic-department draft per incident: when several routes are late together the
+  // network alert carries it, and the per-route L3s do not each draft their own.
+  const networkL3 = alerts.some((a) => !a.forecast && a.rule_id === 'delay_network' && a.level === 3);
 
   for (const a of alerts) {
     if (a.forecast || !a.level) continue;
@@ -54,7 +57,7 @@ export function runSop(alerts: Alert[], now_s: number): Alert[] {
       out = out.map((x) => (x.id === a.id ? { ...x, auto_comm_id: msg.communication_id } : x));
     }
 
-    if (a.level === 3 && due(`l3:${a.id}`, now_s)) {
+    if (a.level === 3 && !(networkL3 && a.rule_id === 'delay_sop') && due(`l3:${a.id}`, now_s)) {
       lastDone.set(`l3:${a.id}`, now_s);
       comms.draftCoordination({
         alert_id: a.id,

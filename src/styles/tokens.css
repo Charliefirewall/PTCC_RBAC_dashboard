@@ -54,6 +54,9 @@
   /* ---- alert severity: THREE levels (L1182-L1185; S3/S10 colours) */
   --color-sev-info: #4d8df0;
   --color-sev-warn: #e0a02e;
+  /* FORECAST data (PTCC scenario 2: "forecasted data can use a different colour").
+     Violet: not a severity hue, so a forecast never reads as a live alert. */
+  --color-forecast: #b48cf2;
   --color-sev-crit: #ee5f63; /* 4.27:1 -> AA on bg2 */
   --color-sev-ok: #37b978;
 
@@ -170,6 +173,7 @@
   /* Darker, not lighter - these sit on white. */
   --color-sev-info: #1d4ed8;
   --color-sev-warn: #9a5700; /* 4.15:1 -> 4.78:1 on bg3 */
+  --color-forecast: #6b3fd1;
   --color-sev-crit: #c62828;
   --color-sev-ok: #116840; /* 4.28:1 -> AA on bg3 */
 

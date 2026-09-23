@@ -34,6 +34,7 @@ import {
 import { DEMO_DEFAULTS, type Thresholds } from '../rules/thresholds';
 import { can } from '../modules/roles/roles';
 import { runSop } from './sop';
+import { maybeForecast, useForecast } from './forecast';
 import { SIM_DOW } from '../sim/baseline';
 
 // Guarded: this module is imported by i18n and by the rules layer, and vitest runs with
@@ -165,7 +166,10 @@ export const useSettings = create<SettingsState>((set) => ({
   l1_auto_exec: params.get('l1auto') !== '0',
   dow: readDow(),
   setL1AutoExec: (l1_auto_exec) => set({ l1_auto_exec }),
-  setDow: (dow) => set({ dow: Math.max(0, Math.min(6, Math.round(dow))) }),
+  setDow: (dow) => {
+    set({ dow: Math.max(0, Math.min(6, Math.round(dow))) });
+    reevaluate();
+  },
   set: (k, v) => {
     set((s) => ({ th: { ...s.th, [k]: v } }));
     reevaluate();
@@ -560,7 +564,10 @@ interface SelState {
   route_id: string | null;
   alert_id: string | null;
   event_id: string | null;
+  /** road segments to highlight on the live map (Analytics -> Hotspots "Show on map") */
+  segment_keys: string[];
   selectVehicle(id: string | null): void;
+  setSegments(keys: string[]): void;
   selectRoute(id: string | null): void;
   selectAlert(id: string | null): void;
   selectEvent(id: string | null): void;
@@ -571,6 +578,8 @@ export const useSelection = create<SelState>((set) => ({
   route_id: null,
   alert_id: null,
   event_id: null,
+  segment_keys: [],
+  setSegments: (segment_keys) => set({ segment_keys }),
   selectVehicle: (vehicle_id) =>
     set({ vehicle_id, route_id: vehicle_id ? (world.vehicleById.get(vehicle_id)?.route_id ?? null) : null }),
   selectRoute: (route_id) => set({ route_id }),
@@ -614,6 +623,8 @@ export function reevaluate(): void {
   const metrics = deriveMetrics(snap, th);
   const { alerts: evaluated } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
   const alerts = runSop(evaluated, snap.sim_time_s);
+  // thresholds or the baseline day changed: the forecast must follow immediately
+  maybeForecast(world, metrics, th, useSettings.getState().dow, true);
   useSim.setState({ metrics });
   useAlerts.setState({ alerts });
 }
@@ -624,6 +635,7 @@ export function startBridge(): () => void {
     const metrics = deriveMetrics(snap, th);
     const { alerts: evaluated } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
     const alerts = runSop(evaluated, snap.sim_time_s);
+    maybeForecast(world, metrics, th, useSettings.getState().dow);
 
     history.t.push(snap.sim_time_s);
     history.kpi.in_service.push(metrics.in_service);
@@ -660,6 +672,7 @@ if (typeof window !== 'undefined') {
     useComms,
     useSettings,
     useSelection,
+    useForecast,
     engine,
     world,
     history,

@@ -65,6 +65,7 @@ export const sopDict = {
   'set.dow': { en: 'Baseline day of week', mn: 'Суурь өдөр' },
   'role.perm.revoke_auto_action': { en: 'Revoke an automatic SOP notification', mn: 'Автомат SOP мэдэгдлийг цуцлах' },
   'role.perm.escalate_l3': { en: 'Escalate a Level 3 delay', mn: '3-р түвшний хоцролтыг дээш шилжүүлэх' },
+  'hk.ptcc': { en: 'Run D10 — PTCC SOP ladder (N for next level)', mn: 'D10 — PTCC SOP шатыг ажиллуулах (дараагийн түвшин N)' },
   'dow.0': { en: 'Mon', mn: 'Да' },
   'dow.1': { en: 'Tue', mn: 'Мя' },
   'dow.2': { en: 'Wed', mn: 'Лх' },

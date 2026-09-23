@@ -60,6 +60,14 @@ describe('SOP execution', () => {
     expect(c[0]!.auto).toBeUndefined();
   });
 
+  it('drafts once per incident: the network alert carries it, not each late route', () => {
+    const net: Alert = { ...alert(3), id: 'delay_network:net', rule_id: 'delay_network', route_id: undefined, params: { n: 6, min: 31, routes: 'R7, R5' } };
+    runSop([alert(3), net], 1000);
+    const c = useComms.getState().coordination;
+    expect(c).toHaveLength(1);
+    expect(c[0]!.alert_id).toBe('delay_network:net');
+  });
+
   it('revoke is permission-gated and audited', () => {
     runSop([alert(1)], 1000);
     const id = useComms.getState().coordination[0]!.communication_id;

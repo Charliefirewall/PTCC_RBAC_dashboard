@@ -45,6 +45,8 @@ export const useRunner = create<RunnerState>((set, get) => ({
 const KEY_TO_SCENARIO: Record<string, ScenarioId> = {
   '1': 'D1', '2': 'D2', '3': 'D3', '4': 'D4', '5': 'D5',
   '6': 'D6', '7': 'D7', '8': 'D8', '9': 'D9',
+  // PTCC's own SOP scenario - P for PTCC
+  p: 'D10', P: 'D10',
 };
 
 export function useHotkeys(): void {
@@ -106,6 +108,7 @@ export function useHotkeys(): void {
  */
 export const HOTKEY_HELP: readonly [string, I18nKey][] = [
   ['1 – 9', 'hk.scenario'],
+  ['P', 'hk.ptcc'],
   ['N', 'hk.next'],
   ['0', 'hk.reset'],
   ['W', 'hk.wall'],

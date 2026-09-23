@@ -9,7 +9,7 @@
 import { seedDeviceBaseline } from '../data/build';
 import type { World } from './types';
 
-export type ScenarioId = 'D1' | 'D2' | 'D3' | 'D4' | 'D5' | 'D6' | 'D7' | 'D8' | 'D9';
+export type ScenarioId = 'D1' | 'D2' | 'D3' | 'D4' | 'D5' | 'D6' | 'D7' | 'D8' | 'D9' | 'D10';
 
 export interface Step {
   label: string;
@@ -351,7 +351,55 @@ export const SCENARIOS: Record<ScenarioId, Scenario> = {
       w.feed_stale = false;
     },
   },
+
+  /*
+   * D10 is not in the design document: it is PTCC's own "Suggested scenario 1" (PTCC note,
+   * Sept 2026) - one example per SOP level. Step 3 makes five further routes late, which
+   * by the PTCC matrix lifts EVERY late route by one level - so the L1 from step 1 becomes
+   * L2 and the step-2 route becomes L3. That is the rule, shown working, not a glitch.
+   */
+  D10: {
+    id: 'D10',
+    title: 'PTCC SOP ladder — L1 auto, L2 proposed, L3 escalate to Traffic',
+    source: 'PTCC note, Sept 2026 — suggested scenario 1 (5 / 15 / 30 min × 1 / 5 routes)',
+    steps: [
+      {
+        label: 'L1 · one route ~7 min late — notification sent automatically',
+        role: 'System (SOP L1)',
+        apply(w, t) {
+          makeLate(w, 'R10', 7, t, 0.7);
+        },
+      },
+      {
+        label: 'L2 · one route ~17 min late — proposed action awaits approval',
+        role: 'Operations Controller',
+        apply(w, t) {
+          makeLate(w, 'R5', 17, t, 0.5);
+        },
+      },
+      {
+        label: 'L3 · corridor jam, 5+ routes late — escalate, draft to Traffic department',
+        role: 'Incident Manager',
+        apply(w, t) {
+          for (const rid of ['R3', 'R4', 'R12', 'R21', 'R22']) makeLate(w, rid, 9, t, 0.45);
+          makeLate(w, 'R7', 32, t, 0.3);
+        },
+      },
+    ],
+    reset: clearFlags,
+  },
 };
+
+/**
+ * Push every in-service bus on `route_id` to about `min` minutes late and slow the route
+ * so it stays there (the engine's mean reversion would otherwise walk it back in minutes).
+ */
+function makeLate(w: World, route_id: string, min: number, t: number, factor = 0.55): void {
+  w.congestion.set(route_id, { factor, until_s: t + 2700 });
+  vehiclesOn(w, route_id).forEach((v, i) => {
+    v.schedule_deviation = min * 60 + (i % 3) * 40;
+  });
+}
 
 export function resetAll(w: World): void {
   for (const s of Object.values(SCENARIOS)) s.reset(w);

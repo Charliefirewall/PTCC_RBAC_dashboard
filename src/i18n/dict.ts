@@ -18,6 +18,7 @@ import { roiDict } from './dict.roi';
 import { predictDict } from './dict.predict';
 import { depotDict } from './dict.depot';
 import { sopDict } from './dict.sop';
+import { insightDict } from './dict.insight';
 
 export interface Entry {
   en: string;
@@ -811,7 +812,7 @@ const d = {
  * dashboards, the map and the remaining modules cannot collide in one shared file.
  * Keys must be globally unique; a duplicate key is a compile error below.
  */
-const merged = { ...d, ...agenticDict, ...rolesDict, ...mapDict, ...modulesDict, ...overlayDict, ...dashDict, ...copilotDict, ...kitDict, ...roiDict, ...predictDict, ...depotDict, ...sopDict };
+const merged = { ...d, ...agenticDict, ...rolesDict, ...mapDict, ...modulesDict, ...overlayDict, ...dashDict, ...copilotDict, ...kitDict, ...roiDict, ...predictDict, ...depotDict, ...sopDict, ...insightDict };
 
 export type I18nKey = keyof typeof merged;
 
