@@ -1,0 +1,90 @@
+import { describe, expect, it } from 'vitest';
+import { buildRoutes, buildWorld } from '../data/build';
+import { deriveMetrics } from '../rules/evaluate';
+import { DEMO_DEFAULTS } from '../rules/thresholds';
+import { BUCKETS, bucketOf, buildBaseline, HOT_SEGMENTS, liveSegExcess } from './baseline';
+import { SimEngine } from './engine';
+
+const SEED = 20260921;
+const b0800 = bucketOf(8 * 3600);
+
+describe('synthetic Mon-Sun baseline', () => {
+  const routes = buildRoutes(SEED);
+  const base = buildBaseline(SEED, routes);
+
+  it('is deterministic for a seed and differs across seeds', () => {
+    const again = buildBaseline(SEED, routes);
+    const other = buildBaseline(SEED + 1, routes);
+    const k = base.segKeys[3]!;
+    expect(again.segExcess(k, 2, 10)).toEqual(base.segExcess(k, 2, 10));
+    const diff = base.segKeys.some((key) => base.segExcess(key, 0, 8).mean !== other.segExcess(key, 0, 8).mean);
+    expect(diff).toBe(true);
+  });
+
+  it('puts the chronic hotspots on roads a UB audience recognises', () => {
+    // E11: the five slowest-by-design segments are named central corridor stretches
+    expect([...HOT_SEGMENTS].sort()).toEqual([
+      'n-3r4r|n-bayangol', 'n-ard|n-peace-w', 'n-bayangol|n-dragon', 'n-officers|n-sukhbaatar', 'n-peace-w|n-sukhbaatar',
+    ]);
+    const midday = bucketOf(12 * 3600);
+    const hotMean = HOT_SEGMENTS.map((k) => base.segExcess(k, 0, midday).mean);
+    const others = base.segKeys.filter((k) => !HOT_SEGMENTS.includes(k)).map((k) => base.segExcess(k, 0, midday).mean);
+    expect(Math.min(...hotMean)).toBeGreaterThan(Math.max(...others));
+  });
+
+  it('covers every corridor edge used by a route, 7 days x 60 buckets', () => {
+    const used = new Set(routes.flatMap((r) => r.edges!.map((e) => e.key)));
+    expect(base.segKeys.length).toBe(used.size);
+    expect(BUCKETS).toBe(60);
+  });
+
+  it('p10 <= mean <= p90 at every stop and the band widens along the trip', () => {
+    const r = routes.find((x) => x.route_id === 'R7')!;
+    const p = base.profile(r, 0, 0, b0800);
+    expect(p).toHaveLength(r.stops.length);
+    for (const s of p) expect(s.p10 <= s.mean && s.mean <= s.p90).toBe(true);
+    expect(p[p.length - 1]!.p90 - p[p.length - 1]!.p10).toBeGreaterThan(p[1]!.p90 - p[1]!.p10);
+  });
+
+  it('a Monday morning peak is worse than a Sunday one and than Monday midday', () => {
+    const r = routes.find((x) => x.route_id === 'R7')!;
+    const end = (dow: number, b: number) => base.profile(r, 0, dow, b).at(-1)!.mean;
+    expect(end(0, b0800)).toBeGreaterThan(end(6, b0800));
+    expect(end(0, b0800)).toBeGreaterThan(end(0, bucketOf(11 * 3600)));
+  });
+
+  it('live and norm share a scale: unperturbed, live segment delay sits near its norm', () => {
+    const w = buildWorld(SEED, 7 * 3600 + 40 * 60);
+    const e = new SimEngine(w);
+    for (let i = 0; i < 720; i++) e.tick();
+    const b = buildBaseline(SEED, w.routes);
+    const diffs: number[] = [];
+    for (const k of b.segKeys) {
+      const live = liveSegExcess(w, k);
+      if (live.n >= 5) diffs.push(live.mean - b.segExcess(k, 0, bucketOf(w.sim_time_s)).mean);
+    }
+    diffs.sort((x, y) => x - y);
+    expect(diffs.length).toBeGreaterThan(20);
+    // median segment within 8 s/km of its norm, and almost none tripping the 15 s/km
+    // "act now" margin with no scenario running
+    expect(Math.abs(diffs[Math.floor(diffs.length / 2)]!)).toBeLessThan(8);
+    expect(diffs.filter((d) => d > 15).length).toBeLessThanOrEqual(2);
+  });
+
+  it('the norm is the same order of magnitude as the live sim (calibration)', () => {
+    const w = buildWorld(SEED, 7 * 3600 + 40 * 60);
+    const e = new SimEngine(w);
+    for (let i = 0; i < 180; i++) e.tick();
+    const m = deriveMetrics(e.snapshot(), DEMO_DEFAULTS);
+    const gaps: number[] = [];
+    for (const rm of m.per_route.values()) {
+      if (!rm.vehicles) continue;
+      const r = w.routeById.get(rm.route_id)!;
+      gaps.push(Math.abs(base.routeMeanDev(r, 0, bucketOf(w.sim_time_s)).mean - rm.mean_dev_s));
+    }
+    gaps.sort((a, b) => a - b);
+    // median route: norm within 4 minutes of live - close enough that "vs norm" reads as a
+    // comparison, not a different scale
+    expect(gaps[Math.floor(gaps.length / 2)]!).toBeLessThan(240);
+  });
+});

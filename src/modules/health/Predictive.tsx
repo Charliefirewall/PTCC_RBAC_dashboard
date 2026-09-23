@@ -185,6 +185,9 @@ export default function Predictive({ vehicles, routes }: { vehicles: readonly Ve
       <Callout kind="info" dashed icon={<EvidenceTag label="INFERRED" cite="CV ¶3 · §9.2 A" />} className="mb-2">
         {t('pred.notML', { cap: Math.round(CONFIDENCE_CEILING * 100) })}
       </Callout>
+      <Callout kind="warn" className="mb-2" title={t('pred.action')}>
+        {t('support.pred.governance')}
+      </Callout>
 
       <div className="mb-2 grid shrink-0 grid-cols-2 gap-2 lg:grid-cols-4">
         <KpiTile
@@ -291,7 +294,7 @@ export default function Predictive({ vehicles, routes }: { vehicles: readonly Ve
                 num: true,
                 sortable: true,
                 sortValue: (c) => c.rulKm,
-                render: (c) => <span className="num text-[var(--color-text3)]">{d0(c.rulKm)} km</span>,
+                render: (c) => <span className="num text-[var(--color-text3)]">{d0(c.rulKm)} {t('unit.km')}</span>,
               },
               {
                 key: 'confidence',
@@ -350,7 +353,7 @@ export default function Predictive({ vehicles, routes }: { vehicles: readonly Ve
                     className="flex min-w-0 items-center justify-between gap-2 rounded bg-[var(--color-bg2)] px-2 py-1"
                   >
                     <span className="flex min-w-0 flex-col">
-                      <span className="t-body truncate text-[var(--color-text1)]">{t(f.labelKey)}</span>
+                      <span className="t-body break-words leading-tight text-[var(--color-text1)]">{t(f.labelKey)}</span>
                       <span className="t-meta">{f.dir === 'up' ? t('pred.raises') : t('pred.lowers')}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">

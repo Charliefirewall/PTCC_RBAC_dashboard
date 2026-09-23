@@ -20,9 +20,9 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 
-/** §19.1's required widths. Colour does not change with width, so the contrast and
- *  z-index sweeps stay at one width; layout checks run at all four. */
-const WIDTHS = [1024, 1280, 1440, 1680];
+/** §19.1's required desktop widths plus phone/tablet regression widths. Colour does
+ *  not change with width, so contrast and z-index sweeps stay at one desktop width. */
+const WIDTHS = [390, 768, 1024, 1280, 1440, 1680];
 const HEIGHT = 800;
 
 const ROLES_TO_AUDIT = [
@@ -31,8 +31,9 @@ const ROLES_TO_AUDIT = [
 ];
 
 const ROUTES = [
-  'command', 'map', 'regularity', 'passenger', 'alerts', 'comms',
-  'health', 'operators', 'copilot', 'agentic', 'roi', 'analytics', 'multimodal', 'settings',
+  'command', 'map', 'regularity', 'passenger', 'alerts', 'forecast', 'comms',
+  'health', 'operators', 'copilot', 'agentic', 'roi', 'analytics', 'multimodal', 'provenance',
+  'depot', 'platform', 'settings',
   'dashboard',
 ];
 
@@ -898,6 +899,41 @@ test('no dead tab stops on the Command Centre', async ({ page }) => {
   });
   for (const d of dead) note(`[a11y] command: dead tab stop ${d}`);
   expect(dead, `focusable <button> elements that do nothing:\n  ${dead.join('\n  ')}`).toEqual([]);
+});
+
+test('responsive tab keyboard behavior, context and route focus', async ({ page }) => {
+  test.setTimeout(4 * 60_000);
+  watchErrors(page);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?theme=dark&role=operations_controller#/analytics?tab=route&route=R7&dow=4&start=08%3A15');
+  await page.waitForTimeout(1200);
+  const analyticsTabs = page.locator('[role="tablist"][aria-label] [role="tab"]');
+  expect(await analyticsTabs.count()).toBeGreaterThanOrEqual(4);
+  expect(await analyticsTabs.evaluateAll((tabs) => tabs.filter((tab) => tab.getAttribute('tabindex') === '0').length)).toBe(1);
+  const activeAnalytics = page.locator('[role="tab"][aria-selected="true"]').first();
+  await activeAnalytics.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('[role="tab"][aria-selected="true"]').first()).toHaveAttribute('tabindex', '0');
+  await page.waitForTimeout(100);
+  await expect(page.locator('#analytics-tab-hotspots')).toBeFocused();
+  expect(new URL(page.url()).hash).toContain('route=R7');
+  expect(new URL(page.url()).hash).toContain('dow=4');
+  expect(new URL(page.url()).hash).toContain('start=08%3A15');
+
+  await page.goto('/?theme=dark&role=operations_controller#/alerts');
+  await page.waitForTimeout(1000);
+  const more = page.getByRole('button', { name: /more filters/i });
+  await expect(more).toBeVisible();
+  await more.click();
+  await expect(page.locator('#alert-more-filters')).toBeVisible();
+  const alertTab = page.locator('#alerts-workspace-tab-alerts');
+  await alertTab.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#alerts-workspace-tab-forecast')).toHaveAttribute('aria-selected', 'true');
+
+  await page.evaluate(() => { location.hash = '#/analytics'; });
+  await expect(page.locator('h1')).toBeFocused();
 });
 
 /**

@@ -15,6 +15,7 @@
  * central claim, not a setting, so it keeps a labelled control on the bar itself.
  */
 
+import { useTx } from '../i18n/t';
 import { useEffect, useRef, useState } from 'react';
 import { engine, useSettings, useSim } from '../store';
 import { useOverlayStore } from '../store/overlay';
@@ -241,24 +242,28 @@ function EvidenceToggle() {
   );
 }
 
-export function TopBar() {
+export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
   const t = useT();
+  const tx = useTx();
   const role = useSettings((s) => s.role);
   const snap = useSim((s) => s.snap);
   const running = useSim((s) => s.running);
   const stale = snap?.feed_stale;
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-[var(--color-line)] bg-[var(--color-bg1)] px-3">
+    <header data-top-bar className="flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--color-line)] bg-[var(--color-bg1)] px-2 sm:gap-2.5 sm:px-3">
+      <Button size="sm" onClick={onOpenNav} title={t('nav.mobile.open')} aria-label={t('nav.mobile.open')} className="lg:hidden">
+        <Icon name="layers" size={14} />
+      </Button>
       <div className="flex items-center gap-2">
         <div className="grid h-7 w-7 place-items-center rounded bg-[var(--color-accent)] t-card !font-bold text-[var(--color-on-accent)]">P</div>
-        <span className="t-card tracking-tight">{t('app.title')}</span>
+        <span className="t-card hidden tracking-tight 2xl:inline">{t('app.title')}</span>
       </div>
 
-      <div className="mx-1 h-6 w-px bg-[var(--color-line)]" />
+      <div className="mx-1 hidden h-6 w-px bg-[var(--color-line)] sm:block" />
 
-      <span className="t-section num">{snap ? hhmmss(snap.sim_time_s) : '--:--:--'}</span>
-      <span className="t-meta">UB · UTC+8</span>
+      <span className="t-section num hidden sm:inline">{snap ? hhmmss(snap.sim_time_s) : '--:--:--'}</span>
+      <span className="t-meta hidden 2xl:inline">{tx('UB · UTC+8')}</span>
       {stale ? (
         <StatusPill tone="crit">{t('app.staleFeed')}</StatusPill>
       ) : (
@@ -280,7 +285,7 @@ export function TopBar() {
 
       {/* The ask bar takes the middle. It is present on every route, and in wall mode -
           which drops this whole header - it is simply absent (item 14, F-06). */}
-      <div className="mx-1 flex min-w-0 flex-1 justify-center">
+      <div className="mx-0 flex min-w-[5rem] flex-1 justify-center sm:mx-1">
         <AskBar />
       </div>
 
@@ -290,7 +295,7 @@ export function TopBar() {
         {t(roleLabelKey(role))}
       </span>
 
-      <div className="mx-1 h-6 w-px bg-[var(--color-line)]" />
+      <div className="mx-1 hidden h-6 w-px bg-[var(--color-line)] md:block" />
 
       <EvidenceToggle />
 

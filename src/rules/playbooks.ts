@@ -49,6 +49,35 @@ export const PLAYBOOKS: Record<PlaybookId, Playbook> = {
     roles: ['incident_manager'],
     target_response_min: 10,
   },
+  /*
+   * PTCC SOP ladder for delays (PTCC note, Sept 2026). The LEVELS and what each does are
+   * the client's: L1 route level executes automatically, L2 proposes an action, L3
+   * escalates and communicates with the Traffic department. The action WORDING below is
+   * ours until PTPD supplies SOP text (plan §13 Q3) - graded ASSUMPTION on screen.
+   * L1's notification is sent at alert time by store/sop.ts; these lists are what the
+   * event checklist shows if an operator also validates it into an event.
+   */
+  delay_l1: {
+    id: 'delay_l1',
+    recommended: ['pb.monitor_recovery'],
+    compulsory: ['pb.notify_driver_delay', 'pb.notify_operator_dispatch'],
+    roles: ['operations_controller'],
+    target_response_min: 5,
+  },
+  delay_l2: {
+    id: 'delay_l2',
+    recommended: ['pb.adjust_headway', 'pb.short_turn'],
+    compulsory: ['pb.notify_operator_dispatch', 'pb.record_delay'],
+    roles: ['operations_controller'],
+    target_response_min: 15,
+  },
+  delay_l3: {
+    id: 'delay_l3',
+    recommended: ['pb.reroute_services'],
+    compulsory: ['pb.escalate_senior', 'pb.notify_traffic_department', 'pb.broadcast_update'],
+    roles: ['incident_manager', 'supervisor'],
+    target_response_min: 10,
+  },
   generic: {
     id: 'generic',
     recommended: ['pb.contact_driver', 'pb.inform_operator_dispatch', 'pb.broadcast_update'],
@@ -64,10 +93,16 @@ const GATE_AT_RESOLUTION = new Set([
   'pb.preserve_evidence',
   'pb.notify_traffic_police',
   'pb.request_towing',
+  'pb.notify_traffic_department',
 ]);
 
-export function playbookFor(event_type: string): PlaybookId {
+export function playbookFor(event_type: string, level?: 1 | 2 | 3): PlaybookId {
   switch (event_type) {
+    case 'delay_sop':
+    case 'delay_network':
+      // network delay means >= routes_affected_l2 routes, which is L2 at least
+      if (level === 3) return 'delay_l3';
+      return level === 1 && event_type === 'delay_sop' ? 'delay_l1' : 'delay_l2';
     case 'vehicle_breakdown':
       return 'vehicle_breakdown';
     case 'accident':

@@ -1,6 +1,7 @@
 import { dict, type I18nKey } from './dict';
 import type { Lang } from '../sim/types';
 import { useSettings } from '../store';
+import { localizeValue } from './codes';
 
 export type { I18nKey };
 
@@ -22,7 +23,9 @@ export function t(key: I18nKey, lang: Lang, params?: Record<string, string | num
       // strings "undefined" / "NaN" / "Infinity". A dash is the honest rendering of a
       // value we do not have.
       const safe = v === null || v === undefined || (typeof v === 'number' && !Number.isFinite(v)) ? '—' : String(v);
-      s = s.replaceAll(`{${k}}`, safe);
+      // codes, units and place names inside the sentence follow the language (i18n/codes.ts)
+      const shown = typeof v === 'string' ? localizeValue(safe, lang) : safe;
+      s = s.replaceAll(`{${k}}`, shown);
     }
   }
   return s;
@@ -31,6 +34,12 @@ export function t(key: I18nKey, lang: Lang, params?: Record<string, string | num
 export function useT() {
   const lang = useSettings((s) => s.lang);
   return (key: I18nKey, params?: Record<string, string | number>) => t(key, lang, params);
+}
+
+/** For raw data shown outside a sentence (a table cell, an actor name): same rules as t() params. */
+export function useTx() {
+  const lang = useSettings((s) => s.lang);
+  return (v: string) => localizeValue(v, lang);
 }
 
 export function useLang(): Lang {

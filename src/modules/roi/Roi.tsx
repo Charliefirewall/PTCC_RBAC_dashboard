@@ -273,18 +273,30 @@ export default function Roi() {
   const termChart = useMemo(
     () => ({
       ...CHART_BASE,
-      grid: { ...CHART_BASE.grid, left: 132, right: 56, top: 8, bottom: 22 },
+      grid: { ...CHART_BASE.grid, left: 8, right: 18, top: 8, bottom: 8 },
+      tooltip: {
+        ...CHART_BASE.tooltip,
+        trigger: 'item' as const,
+        formatter: (p: { dataIndex: number; value: number }) => {
+          const row = out.terms[p.dataIndex];
+          return `<b>${row ? t(row.key as I18nKey) : '—'}</b><br/>${t('chart.series.annualCost')}: ${fmtT(Number(p.value), (k) => t(k))} MNT / ${t('uxreg.year')}`;
+        },
+      },
       // The whole reason this module has its own formatter: a raw 2,500,000,000 tick is
       // not a number anybody reads off a wall.
       xAxis: {
         ...AXIS,
         type: 'value',
-        name: MNT,
+        name: t('chart.axis.annualCost'),
+        nameLocation: 'middle',
+        nameGap: 26,
         axisLabel: { ...AXIS.axisLabel, formatter: (v: number) => fmtT(v, (k) => t(k)) },
       },
-      yAxis: { ...AXIS, type: 'category', inverse: true, data: out.terms.map((x) => t(x.key as I18nKey)) },
+      yAxis: { ...AXIS, type: 'category', inverse: true, data: out.terms.map((x) => t(x.key as I18nKey)), name: t('chart.axis.costDriver'), nameLocation: 'end', nameGap: 7 },
       series: [
         {
+          id: 'annual-value-driver',
+          name: t('chart.series.annualCost'),
           type: 'bar',
           data: out.terms.map((x) => Math.round(x.annual)),
           itemStyle: { color: cssVar('--color-accent', '#4d8df0') },
@@ -310,6 +322,7 @@ export default function Roi() {
   const assumption = <EvidenceTag label="ASSUMPTION" cite={t('roi.citeNoData')} />;
   const payback =
     out.paybackMonths === null ? t('roi.never') : out.paybackMonths.toFixed(out.paybackMonths >= 10 ? 0 : 1);
+  const largestTerm = [...out.terms].sort((a, b) => b.annual - a.annual)[0];
 
   const numField = (f: Spec, pctLever = false) =>
     pctLever ? (
@@ -342,6 +355,11 @@ export default function Roi() {
       <Callout kind="warn" dashed className="shrink-0" icon={assumption}>
         {t('roi.scenarioNotice')}
       </Callout>
+      <p className="t-body shrink-0 border-l-2 border-[var(--color-accent)] pl-2 text-[var(--color-text1)]" data-roi-insight>
+        {largestTerm
+          ? t('uxreg.roiInsight', { driver: t(largestTerm.key as I18nKey), annual: money(largestTerm.annual), net: money(out.net), payback })
+          : t('uxreg.roiInsightEmpty')}
+      </p>
 
       <div className="flex min-h-0 flex-1 gap-2">
         {/* ------------------------------------------------ the persistent input column */}
@@ -464,7 +482,7 @@ export default function Roi() {
 
               <div className="grid shrink-0 grid-cols-2 gap-2">
                 <Panel titleKey="roi.breakdownChart" sub={t('roi.authoritySub')} className="h-[280px]" right={assumption} bodyClassName="p-1">
-                  <EChart option={termChart} />
+                  <EChart option={termChart} ariaLabel={`${t('roi.breakdownChart')} · ${t('chart.axis.annualCost')} by ${t('chart.axis.costDriver')}`} />
                 </Panel>
                 <Panel titleKey="roi.breakdown" className="h-[280px]" right={assumption}>
                   <DataTable
@@ -541,7 +559,7 @@ export default function Roi() {
               </Callout>
 
               <div className="grid shrink-0 grid-cols-3 gap-2">
-                <KpiTile labelKey="roi.peakRequirement" value={int(sizing.required)} wall={wall} evidence="ASSUMPTION" sub={`${peakKmh} km/h`} />
+                <KpiTile labelKey="roi.peakRequirement" value={int(sizing.required)} wall={wall} evidence="ASSUMPTION" sub={`${peakKmh} ${t('unit.kmh')}`} />
                 <KpiTile labelKey="roi.currentFleet" value={int(sizing.current)} wall={wall} evidence="CONFIRMED" />
                 <KpiTile
                   labelKey="roi.gap"
@@ -560,7 +578,7 @@ export default function Roi() {
                     max={30}
                     value={peakKmh}
                     onChange={setPeakKmh}
-                    format={(v) => `${v} km/h`}
+                    format={(v) => `${v} ${t('unit.kmh')}`}
                     hint={t('roi.speedNote')}
                     right={<StatusPill tone="info">{t('roi.currentFleet')}: {int(sizing.current)}</StatusPill>}
                   />

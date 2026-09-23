@@ -2,6 +2,7 @@
  * Shared presentational primitives. No store imports here - props only.
  */
 
+import { useTx } from '../i18n/t';
 import { useState, type ReactNode } from 'react';
 import { useSettings } from '../store';
 import type { EventSeverity, Evidence, Severity } from '../sim/types';
@@ -71,8 +72,9 @@ const EV_COLOR: Record<Evidence, string> = {
  */
 export function EvidenceTag({ label, cite, className = '' }: { label: Evidence; cite?: string; className?: string }) {
   const t = useT();
+  const tx = useTx();
   const loud = useSettings((s) => s.showEvidence);
-  const title = `${t(`evidence.${label}` as I18nKey)}${cite ? ` - ${cite}` : ''}`;
+  const title = `${t(`evidence.${label}` as I18nKey)}${cite ? ` - ${tx(cite)}` : ''}`;
   /*
    * Defect A-7: this used to be a native `title=`, which no keyboard and no touch device
    * can reach. It is now a real Tooltip carrying a SENTENCE about what the grade means,
@@ -90,7 +92,7 @@ export function EvidenceTag({ label, cite, className = '' }: { label: Evidence; 
         <>
           <br />
           <span className="t-meta">
-            {t('kit.ev.source')}: {cite}
+            {t('kit.ev.source')}: {tx(cite)}
           </span>
         </>
       ) : null}
@@ -137,7 +139,7 @@ export function EvidenceTag({ label, cite, className = '' }: { label: Evidence; 
         style={{ color: EV_COLOR[label], border: `1px solid ${EV_COLOR[label]}`, opacity: 0.9 }}
       >
         {t(`evidence.${label}` as I18nKey)}
-        {cite ? <span className="font-normal opacity-70">{cite}</span> : null}
+        {cite ? <span className="font-normal opacity-70">{tx(cite)}</span> : null}
       </span>
     </Tooltip>
   );

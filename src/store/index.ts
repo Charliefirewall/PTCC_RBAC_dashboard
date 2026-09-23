@@ -15,13 +15,14 @@ import type {
   EmergencyEvent,
   EventCategory,
   EventSeverity,
+  HistoricalAlertRecord,
   Lang,
   PassengerMessage,
   RoleId,
   SimSnapshot,
   WorkflowStage,
 } from '../sim/types';
-import { WORKFLOW_STAGES } from '../sim/types';
+import { tripIdOf, WORKFLOW_STAGES } from '../sim/types';
 import { deriveMetrics, evaluateRules, makeHysteresis, type DerivedMetrics } from '../rules/evaluate';
 import {
   buildActions,
@@ -33,6 +34,9 @@ import {
 } from '../rules/playbooks';
 import { DEMO_DEFAULTS, type Thresholds } from '../rules/thresholds';
 import { can } from '../modules/roles/roles';
+import { runSop, tickComms } from './sop';
+import { maybeForecast, useForecast } from './forecast';
+import { SIM_DOW } from '../sim/baseline';
 
 // Guarded: this module is imported by i18n and by the rules layer, and vitest runs with
 // environment: 'node' where `location` does not exist - an unguarded read here made the
@@ -40,6 +44,17 @@ import { can } from '../modules/roles/roles';
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
 export const SEED = Number(params.get('seed') ?? 20260921);
 export const START_SIM = parseHms(params.get('t') ?? '07:40:00');
+
+/** `?dow=` 0..6 (0 = Monday) or mon..sun. Baseline day for forecasts and analytics;
+ *  the sim date itself (2026-09-21) is a Monday and does not change. */
+const DOWS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+function readDow(): number {
+  const v = (params.get('dow') ?? '').toLowerCase();
+  const n = DOWS.indexOf(v.slice(0, 3));
+  if (n >= 0) return n;
+  const k = Number(v);
+  return v !== '' && Number.isInteger(k) && k >= 0 && k <= 6 ? k : SIM_DOW;
+}
 
 export const world = buildWorld(SEED, START_SIM);
 export const engine = new SimEngine(world);
@@ -66,14 +81,67 @@ export const useSim = create<SimState>(() => ({
 
 interface AlertState {
   alerts: Alert[];
+  history: HistoricalAlertRecord[];
   acknowledge: (id: string) => void;
 }
 
 export const useAlerts = create<AlertState>((set) => ({
   alerts: [],
+  history: [],
   acknowledge: (id) =>
     set((s) => ({ alerts: s.alerts.map((a) => (a.id === id ? { ...a, acknowledged: true } : a)) })),
 }));
+
+/** Retain the last observed operational state when an actual alert clears. */
+function commitAlerts(alerts: Alert[], now_s: number): void {
+  const state = useAlerts.getState();
+  const liveIds = new Set(alerts.map((a) => a.id));
+  const alreadyArchived = new Set(state.history.map((r) => `${r.alert.id}:${r.alert.raised_at_s}`));
+  const cleared = state.alerts.filter(
+    (a) => !a.forecast && !liveIds.has(a.id) && !alreadyArchived.has(`${a.id}:${a.raised_at_s}`),
+  );
+  const resolved_at = isoAt(now_s);
+  const records: HistoricalAlertRecord[] = cleared.map((alert) => {
+    const v = alert.vehicle_id ? world.vehicleById.get(alert.vehicle_id) : undefined;
+    const trip_id = v ? tripIdOf(v) : '';
+    const forecasts = ([15, 30, 45, 60] as const).flatMap((h) => {
+      const f = useForecast.getState().byHorizon[h].find(
+        (x) => x.route_id === alert.route_id && (!alert.vehicle_id || x.vehicle_id === alert.vehicle_id || x.params.bus === alert.vehicle_id),
+      );
+      return f
+        ? [{
+            horizon_min: h,
+            probability: f.probability ?? 0,
+            confidence: f.confidence ?? 0,
+            expected_deviation_s: Number(f.metric.value) || 0,
+          }]
+        : [];
+    });
+    return {
+      alert: { ...alert },
+      resolved_at,
+      resolved_at_s: now_s,
+      vehicle: v
+        ? {
+            vehicle_id: v.vehicle_id,
+            route_id: v.route_id,
+            driver_id: v.driver_id,
+            latitude: v.latitude,
+            longitude: v.longitude,
+            speed_kmh: v.speed,
+            schedule_deviation_s: v.schedule_deviation,
+            passenger_load_pct: v.capacity > 0 ? (v.pax_count / v.capacity) * 100 : 0,
+            trip_id,
+            trip_progress: v.trip_progress,
+            next_stop_id: v.next_stop_id,
+          }
+        : undefined,
+      stops: trip_id ? [...(world.tripLog.get(trip_id) ?? [])] : [],
+      forecasts,
+    };
+  });
+  useAlerts.setState({ alerts, history: [...records, ...state.history].slice(0, 1000) });
+}
 
 // ---------------------------------------------------------------- settings
 
@@ -120,6 +188,13 @@ interface SettingsState {
   theme: Theme;
   showEvidence: boolean;
   llmEnabled: boolean;
+  /** PTCC L1 SOP: send the driver/operator notification without a click. The human
+   *  gate on an automatic action is this switch plus Revoke on every sent message. */
+  l1_auto_exec: boolean;
+  /** baseline day of week, 0 = Monday */
+  dow: number;
+  setL1AutoExec(on: boolean): void;
+  setDow(d: number): void;
   set<K extends keyof Thresholds>(k: K, v: Thresholds[K]): void;
   reset(): void;
   setLang(l: Lang): void;
@@ -142,6 +217,13 @@ export const useSettings = create<SettingsState>((set) => ({
   theme: readTheme(),
   showEvidence: params.get('evidence') === '1',
   llmEnabled: import.meta.env.VITE_LLM_ENABLED === 'true',
+  l1_auto_exec: params.get('l1auto') !== '0',
+  dow: readDow(),
+  setL1AutoExec: (l1_auto_exec) => set({ l1_auto_exec }),
+  setDow: (dow) => {
+    set({ dow: Math.max(0, Math.min(6, Math.round(dow))) });
+    reevaluate();
+  },
   set: (k, v) => {
     set((s) => ({ th: { ...s.th, [k]: v } }));
     reevaluate();
@@ -211,7 +293,7 @@ export const useEvents = create<EventState>((set, get) => ({
   audit: [],
   validate: (alert, input) => {
     const now = isoAt(world.sim_time_s);
-    const pb = playbookFor(input.event_type);
+    const pb = playbookFor(input.event_type, alert.level);
     const v = alert.vehicle_id ? world.vehicleById.get(alert.vehicle_id) : undefined;
     const ev: EmergencyEvent = {
       event_id: `EV-2026-0921-${String(++eventSeq).padStart(3, '0')}`,
@@ -414,6 +496,28 @@ interface CommsState {
   draftPassenger(m: Omit<PassengerMessage, 'message_id' | 'created_at' | 'status'>): PassengerMessage;
   approve(message_id: string, by: string): void;
   sendCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at'>): CoordinationMessage | undefined;
+  /** L1 SOP: the system sends. No role check - the gates are the Settings switch and revoke(). */
+  sendSystemCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'auto' | 'status'>): CoordinationMessage;
+  /** L3 SOP: the system prepares, a person sends. */
+  draftCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'status'>): CoordinationMessage;
+  /** Analytics: a permitted operator proposes a traceable action; this is never an L3 event by itself. */
+  draftProactiveCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'status' | 'provenance' | 'intent'>): CoordinationMessage | undefined;
+  /** Analytics: an Incident Manager requests senior/TCC review without relabelling a forecast as an actual L3. */
+  requestAnalyticsEscalation(
+    m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'status' | 'provenance' | 'intent' | 'recipient' | 'message_type' | 'channel'>
+      & Required<Pick<CoordinationMessage, 'reason' | 'evidence'>>,
+  ): CoordinationMessage | undefined;
+  sendDraft(communication_id: string, by: string): boolean;
+  revoke(communication_id: string, by: string): boolean;
+}
+
+export function audit(action: string, target: string, actor: string, detail?: string): void {
+  useEvents.setState((s) => ({
+    audit: [
+      { at: isoAt(world.sim_time_s), actor, role: useSettings.getState().role, action, target, detail },
+      ...s.audit,
+    ],
+  }));
 }
 
 let msgSeq = 0;
@@ -464,6 +568,105 @@ export const useComms = create<CommsState>((set) => ({
     set((s) => ({ coordination: [msg, ...s.coordination] }));
     return msg;
   },
+  sendSystemCoordination: (m) => {
+    const msg: CoordinationMessage = {
+      ...m,
+      communication_id: `CM-${String(++msgSeq).padStart(4, '0')}`,
+      sent_at: isoAt(world.sim_time_s),
+      status: 'sent',
+      auto: true,
+    };
+    set((s) => ({ coordination: [msg, ...s.coordination] }));
+    audit('auto_exec_l1', m.alert_id ?? msg.communication_id, 'system', msg.communication_id);
+    return msg;
+  },
+  draftCoordination: (m) => {
+    const msg: CoordinationMessage = {
+      ...m,
+      communication_id: `CM-${String(++msgSeq).padStart(4, '0')}`,
+      sent_at: isoAt(world.sim_time_s),
+      status: 'draft',
+    };
+    set((s) => ({ coordination: [msg, ...s.coordination] }));
+    audit(
+      m.intent === 'actual_l3_escalation' ? 'auto_draft_l3' : 'coordination_draft',
+      m.alert_id ?? msg.communication_id,
+      m.intent === 'actual_l3_escalation' ? 'system' : m.operator,
+      `${msg.communication_id} -> ${m.recipient}`,
+    );
+    return msg;
+  },
+  draftProactiveCoordination: (m) => {
+    const role = useSettings.getState().role;
+    if (!can(role, 'send_coordination')) return;
+    const msg: CoordinationMessage = {
+      ...m,
+      communication_id: `CM-${String(++msgSeq).padStart(4, '0')}`,
+      sent_at: isoAt(world.sim_time_s),
+      status: 'draft',
+      provenance: 'analytics_proactive',
+      intent: 'proactive_proposal',
+      // R967: a TCC proposal is handed off to a person and uses the manual channel.
+      channel: m.recipient === 'tcc' ? 'manual (telephone)' : m.channel,
+    };
+    set((s) => ({ coordination: [msg, ...s.coordination] }));
+    audit(
+      'proactive_coordination_proposed',
+      msg.communication_id,
+      m.operator,
+      `${m.recipient} · ${m.context?.segment_id ?? m.context?.route_id ?? 'analytics'} · ${m.reason ?? 'evidence attached'}`,
+    );
+    return msg;
+  },
+  requestAnalyticsEscalation: (m) => {
+    const role = useSettings.getState().role;
+    if (!can(role, 'escalate_l3') || !can(role, 'send_coordination')) return;
+    if (!m.reason.trim() || m.evidence.length === 0) return;
+    const msg: CoordinationMessage = {
+      ...m,
+      communication_id: `CM-${String(++msgSeq).padStart(4, '0')}`,
+      sent_at: isoAt(world.sim_time_s),
+      status: 'draft',
+      provenance: 'analytics_proactive',
+      intent: 'escalation_request',
+      recipient: 'tcc',
+      message_type: 'coordination_request',
+      channel: 'manual (telephone)',
+    };
+    set((s) => ({ coordination: [msg, ...s.coordination] }));
+    audit(
+      'analytics_escalation_requested',
+      msg.communication_id,
+      m.operator,
+      `${m.context?.segment_id ?? m.context?.route_id ?? 'analytics'} · ${m.reason}`,
+    );
+    return msg;
+  },
+  sendDraft: (id, by) => {
+    if (!can(useSettings.getState().role, 'send_coordination')) return false;
+    const msg = useComms.getState().coordination.find((c) => c.communication_id === id);
+    if (!msg || msg.status !== 'draft') return false;
+    set((s) => ({
+      coordination: s.coordination.map((c) =>
+        c.communication_id === id ? { ...c, status: 'sent', sent_at: isoAt(world.sim_time_s), operator: by } : c,
+      ),
+    }));
+    audit('send_draft', id, by, msg.recipient);
+    return true;
+  },
+  revoke: (id, by) => {
+    if (!can(useSettings.getState().role, 'revoke_auto_action')) return false;
+    const msg = useComms.getState().coordination.find((c) => c.communication_id === id);
+    if (!msg || !msg.auto || msg.status === 'revoked') return false;
+    const at = isoAt(world.sim_time_s);
+    set((s) => ({
+      coordination: s.coordination.map((c) =>
+        c.communication_id === id ? { ...c, status: 'revoked', revoked_at: at, revoked_by: by } : c,
+      ),
+    }));
+    audit('revoke_auto_comms', id, by, msg.alert_id);
+    return true;
+  },
 }));
 
 // ---------------------------------------------------------------- selection
@@ -473,7 +676,10 @@ interface SelState {
   route_id: string | null;
   alert_id: string | null;
   event_id: string | null;
+  /** road segments to highlight on the live map (Analytics -> Hotspots "Show on map") */
+  segment_keys: string[];
   selectVehicle(id: string | null): void;
+  setSegments(keys: string[]): void;
   selectRoute(id: string | null): void;
   selectAlert(id: string | null): void;
   selectEvent(id: string | null): void;
@@ -484,6 +690,8 @@ export const useSelection = create<SelState>((set) => ({
   route_id: null,
   alert_id: null,
   event_id: null,
+  segment_keys: [],
+  setSegments: (segment_keys) => set({ segment_keys }),
   selectVehicle: (vehicle_id) =>
     set({ vehicle_id, route_id: vehicle_id ? (world.vehicleById.get(vehicle_id)?.route_id ?? null) : null }),
   selectRoute: (route_id) => set({ route_id }),
@@ -493,29 +701,8 @@ export const useSelection = create<SelState>((set) => ({
 
 // ---------------------------------------------------------------- history rings
 
-export class Ring {
-  private buf: Float32Array;
-  private head = 0;
-  private len = 0;
-  constructor(readonly capacity: number) {
-    this.buf = new Float32Array(capacity);
-  }
-  push(v: number) {
-    this.buf[this.head] = v;
-    this.head = (this.head + 1) % this.capacity;
-    if (this.len < this.capacity) this.len++;
-  }
-  toArray(): number[] {
-    const out: number[] = new Array(this.len);
-    for (let i = 0; i < this.len; i++) {
-      out[i] = this.buf[(this.head - this.len + i + this.capacity) % this.capacity]!;
-    }
-    return out;
-  }
-  last(): number {
-    return this.len ? this.buf[(this.head - 1 + this.capacity) % this.capacity]! : 0;
-  }
-}
+export { Ring } from '../sim/ring';
+import { Ring } from '../sim/ring';
 
 export const history = {
   kpi: {
@@ -546,16 +733,22 @@ export function reevaluate(): void {
   if (!snap) return;
   const th = useSettings.getState().th;
   const metrics = deriveMetrics(snap, th);
-  const { alerts } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
+  const { alerts: evaluated } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
+  const alerts = runSop(evaluated, snap.sim_time_s);
+  // thresholds or the baseline day changed: the forecast must follow immediately
+  maybeForecast(world, metrics, th, useSettings.getState().dow, alerts, true);
   useSim.setState({ metrics });
-  useAlerts.setState({ alerts });
+  commitAlerts(alerts, snap.sim_time_s);
 }
 
 export function startBridge(): () => void {
   return engine.on((snap) => {
     const th = useSettings.getState().th;
     const metrics = deriveMetrics(snap, th);
-    const { alerts } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
+    const { alerts: evaluated } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
+    const alerts = runSop(evaluated, snap.sim_time_s);
+    maybeForecast(world, metrics, th, useSettings.getState().dow, alerts);
+    tickComms(snap.sim_time_s);
 
     history.t.push(snap.sim_time_s);
     history.kpi.in_service.push(metrics.in_service);
@@ -569,7 +762,7 @@ export function startBridge(): () => void {
     }
 
     useSim.setState((s) => ({ snap, metrics, tick: s.tick + 1, running: engine.isRunning(), speed: engine.speed }));
-    useAlerts.setState({ alerts });
+    commitAlerts(alerts, snap.sim_time_s);
   });
 }
 
@@ -592,6 +785,7 @@ if (typeof window !== 'undefined') {
     useComms,
     useSettings,
     useSelection,
+    useForecast,
     engine,
     world,
     history,

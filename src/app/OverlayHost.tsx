@@ -221,8 +221,12 @@ export function OverlayHost() {
 
       {/* ---------------------------------------------------------------- toasts */}
       <div
-        className="pointer-events-none fixed bottom-3 right-3 flex flex-col items-end gap-2"
-        style={{ zIndex: 'var(--z-toast)' }}
+        className="pointer-events-none fixed flex flex-col items-end gap-2"
+        style={{
+          zIndex: 'var(--z-toast)',
+          right: 'calc(0.75rem + env(safe-area-inset-right, 0px))',
+          bottom: 'calc(3rem + env(safe-area-inset-bottom, 0px))',
+        }}
         role="status"
         aria-live="polite"
       >

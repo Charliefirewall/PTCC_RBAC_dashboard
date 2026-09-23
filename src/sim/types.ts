@@ -8,6 +8,8 @@
  * which is a specification error (R1035): 3857 is metres, not decimal degrees.
  */
 
+import type { Ring } from './ring';
+
 export type Lang = 'en' | 'mn';
 export type OperatorId = 'A' | 'B' | 'C';
 export type VehicleStatus = 'in_service' | 'out_of_service' | 'breakdown';
@@ -45,6 +47,42 @@ export interface Route {
   demand_weight: number;
   /** Planned headway in seconds, by daypart. Synthetic - no timetable source exists. */
   planned_headway_s: { amPeak: number; offPeak: number; pmPeak: number; evening: number };
+  /**
+   * The corridor edges this route's shape is made of, in shape order. Kept so delay can
+   * be attributed to a named road segment (PTCC scenario 3b). Optional so hand-written
+   * Route literals in tests still compile.
+   */
+  edges?: RouteEdge[];
+}
+
+/** One corridor edge along a route: canonical key "a|b" (a < b) and its span on the shape. */
+export interface RouteEdge {
+  key: string;
+  from_m: number;
+  to_m: number;
+}
+
+/**
+ * One stop served on one trip - the per-stop log PTCC's drill-down asks for.
+ * The engine keeps `schedule_deviation` as actual - plan at every instant, so the
+ * planned arrival needs no second timetable: planned = t_s - dev_s.
+ */
+export interface StopArrival {
+  trip_id: string;
+  vehicle_id: string;
+  route_id: string;
+  /** index in TRAVEL order (0 = first stop of this trip) */
+  stop_idx: number;
+  stop_id: string;
+  t_s: number;
+  dev_s: number;
+  dwell_s: number;
+  pax: number;
+  boarded: number;
+  /** corridor edge traversed to reach this stop */
+  seg_key: string | null;
+  /** deviation gained since the previous stop, attributed to seg_key */
+  hop_excess_s: number;
 }
 
 export interface Vehicle {
@@ -93,6 +131,14 @@ export interface Vehicle {
   /** Cumulative boardings today - drives ridership + revenue. */
   boardings_today: number;
   km_today: number;
+  /** increments at every turn-round; trip_id = `${vehicle_id}:${trip_seq}` */
+  trip_seq?: number;
+  /** sim seconds the current trip began */
+  trip_start_s?: number;
+}
+
+export function tripIdOf(v: Pick<Vehicle, 'vehicle_id' | 'trip_seq'>, seq = v.trip_seq ?? 0): string {
+  return `${v.vehicle_id}:${seq}`;
 }
 
 export type DeviceState = 'ok' | 'offline';
@@ -124,6 +170,12 @@ export interface World {
    */
   flagUntil: Map<string, number>;
   feed_stale: boolean;
+  /** trip_id -> stops served, in travel order. Current + previous trip per bus. */
+  tripLog: Map<string, StopArrival[]>;
+  /** vehicle_id -> instantaneous speed, one sample per tick (720 = 1 sim hour). */
+  speedLog: Map<string, Ring>;
+  /** segment key -> live deviation gained per km on recent hops, with sim-second stamps. */
+  segObs: Map<string, { v: Ring; t: Ring }>;
 }
 
 export interface SimSnapshot {
@@ -166,6 +218,49 @@ export interface Alert {
   tier: 1 | 3;
   acknowledged: boolean;
   validated_event_id?: string;
+  /** PTCC SOP level (delay rules only): 1 route-level, 2 medium, 3 senior. */
+  level?: 1 | 2 | 3;
+  routes_affected?: number;
+  /** Forecast rows only - never present on a live alert. */
+  forecast?: true;
+  horizon_min?: number;
+  /** chance the level is reached at the horizon, 0..1 */
+  probability?: number;
+  /** model trust, 0..CONFIDENCE_CEILING */
+  confidence?: number;
+  /** L1 auto-notification sent for this alert */
+  auto_comm_id?: string;
+}
+
+/**
+ * Immutable evidence captured when an actual alert clears. Forecast rows never enter
+ * this record: predictions have their own store and visual family.
+ */
+export interface HistoricalAlertRecord {
+  alert: Alert;
+  resolved_at: string;
+  resolved_at_s: number;
+  vehicle?: {
+    vehicle_id: string;
+    route_id: string;
+    driver_id: string;
+    latitude: number;
+    longitude: number;
+    speed_kmh: number;
+    schedule_deviation_s: number;
+    passenger_load_pct: number;
+    trip_id: string;
+    trip_progress: number;
+    next_stop_id: string | null;
+  };
+  stops: StopArrival[];
+  /** Forecasts visible at resolution, retained as predictions rather than observations. */
+  forecasts: Array<{
+    horizon_min: number;
+    probability: number;
+    confidence: number;
+    expected_deviation_s: number;
+  }>;
 }
 
 // ---------------------------------------------------------------- events (5 levels)
@@ -199,6 +294,9 @@ export type PlaybookId =
   | 'vehicle_breakdown'
   | 'traffic_accident'
   | 'security_incident'
+  | 'delay_l1'
+  | 'delay_l2'
+  | 'delay_l3'
   | 'generic';
 
 export interface ActionItem {
@@ -283,6 +381,35 @@ export interface CoordinationMessage {
   channel: string;
   sent_at: string;
   operator: string;
+  /** absent = sent by a person (every message before the SOP work) */
+  status?: 'draft' | 'sent' | 'revoked';
+  /** sent by the system under the L1 SOP, not by a person */
+  auto?: true;
+  alert_id?: string;
+  revoked_at?: string;
+  revoked_by?: string;
+  /** E3: SIMULATED reply from the recipient (TCC) - no real PTCC-TCC link exists (R967). */
+  acknowledged_at?: string;
+  ack_text?: string;
+  /** Why this message exists. Analytics proposals are not confirmed L3 incidents. */
+  provenance?: 'sop_l3' | 'analytics_proactive' | 'manual';
+  /** Keeps a forward-looking proposal visibly and audibly separate from an actual escalation. */
+  intent?: 'actual_l3_escalation' | 'proactive_proposal' | 'escalation_request' | 'coordination';
+  /** Human-readable, traceable basis for a proposed coordination request. */
+  reason?: string;
+  /** Deterministic facts used to support the proposal (never an invented policy). */
+  evidence?: string[];
+  /** The action Operations is being asked to consider. */
+  recommended_action?: string;
+  /** Selection/risk context carried from Analytics into Communications. */
+  context?: {
+    route_id?: string;
+    segment_id?: string;
+    day?: string;
+    time_window?: string;
+    start_time?: string;
+    expected_impact?: string;
+  };
 }
 
 // ---------------------------------------------------------------- roles

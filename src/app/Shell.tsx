@@ -18,6 +18,7 @@ const Regularity = lazy(() => import('../modules/regularity/Regularity'));
 const VehicleDetail = lazy(() => import('../modules/vehicle/VehicleDetail'));
 const Passenger = lazy(() => import('../modules/passenger/Passenger'));
 const Alerts = lazy(() => import('../modules/alerts/Alerts'));
+const Forecast = lazy(() => import('../modules/forecast/Forecast'));
 const Comms = lazy(() => import('../modules/comms/Comms'));
 const FleetHealth = lazy(() => import('../modules/health/FleetHealth'));
 const Operators = lazy(() => import('../modules/operators/Operators'));
@@ -41,6 +42,7 @@ function Route({ path }: { path: string }) {
     case 'map': return <LiveMap />;
     case 'passenger': return <Passenger />;
     case 'alerts': return <Alerts />;
+    case 'forecast': return <Forecast />;
     case 'comms': return <Comms />;
     case 'health': return <FleetHealth />;
     case 'operators': return <Operators />;
@@ -139,12 +141,20 @@ export function Shell() {
       .sort((a, b) => allowed.indexOf(a.path) - allowed.indexOf(b.path));
   }, [role]);
 
+  const openNavigation = () => {
+    overlay.openDrawer({
+      id: 'primary-navigation',
+      title: t('nav.aria'),
+      body: <NavRail modules={modules} current={path} mobile />,
+    });
+  };
+
   if (mode === 'wall') {
     return (
       <div className="wall flex h-full flex-col bg-[var(--color-bg0)]">
         <PageHeading path="command" />
         {guard(
-          <Suspense fallback={<div className="p-6 text-[var(--color-text3)]">Loading…</div>}>
+          <Suspense fallback={<div className="p-6 text-[var(--color-text3)]">{t('app.loading')}</div>}>
             <CommandCentre />
           </Suspense>,
         )}
@@ -159,7 +169,7 @@ export function Shell() {
 
   return (
     <div className="flex h-full flex-col bg-[var(--color-bg0)]">
-      <TopBar />
+      <TopBar onOpenNav={openNavigation} />
       <div className="flex min-h-0 flex-1">
         <NavRail modules={modules} current={path} />
         {/* D-3: `overflow-hidden` meant a layout that did not fit was simply cut off with
@@ -169,7 +179,7 @@ export function Shell() {
         <main className="min-w-0 flex-1 overflow-auto p-2">
           <PageHeading path={path} />
           {guard(
-            <Suspense fallback={<div className="p-6 text-[var(--color-text3)]">Loading…</div>}>
+            <Suspense fallback={<div className="p-6 text-[var(--color-text3)]">{t('app.loading')}</div>}>
               <Route path={path} />
             </Suspense>,
           )}

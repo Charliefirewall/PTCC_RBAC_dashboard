@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useTx } from '../i18n/t';
 import { HOTKEY_HELP, useRunner } from './hotkeys';
 import { SCENARIOS } from '../sim/scenarios';
 import { useSettings } from '../store';
@@ -18,6 +19,7 @@ const HELP_ID = 'presenter-help';
  */
 function usePresenterHelp() {
   const t = useT();
+  const tx = useTx();
   const lang = useLang();
   const showHelp = useRunner((s) => s.showHelp);
   const toggleHelp = useRunner((s) => s.toggleHelp);
@@ -55,7 +57,7 @@ function usePresenterHelp() {
               {Object.values(SCENARIOS).map((s) => (
                 <li key={s.id}>
                   <span className="num mr-2 text-[var(--color-accent)]">{s.id}</span>
-                  {s.title}
+                  {tx(s.title)}
                 </li>
               ))}
             </ul>
@@ -74,7 +76,8 @@ function usePresenterHelp() {
 
 export function ScenarioBar() {
   const t = useT();
-  const { active, step, next, stop } = useRunner();
+  const tx = useTx();
+  const { active, step, next, stop, autoplay, pauseAuto } = useRunner();
   const mode = useSettings((s) => s.mode);
   const sc = active ? SCENARIOS[active] : null;
   usePresenterHelp();
@@ -86,16 +89,21 @@ export function ScenarioBar() {
       {sc && (
         <footer className="flex h-9 shrink-0 items-center gap-3 border-t border-[var(--color-line)] bg-[var(--color-bg1)] px-3 text-[11px]">
           <span className="num rounded bg-[var(--color-accent)] px-1.5 py-0.5 font-bold text-[var(--color-on-accent)]">{sc.id}</span>
-          <span className="font-medium">{sc.title}</span>
+          <span className="font-medium">{tx(sc.title)}</span>
           <span className="text-[var(--color-text3)]">
             {t('sb.step', { n: step + 1, total: sc.steps.length })}
-            {sc.steps[step]?.role ? ` · ${sc.steps[step]!.role}` : ''}
-            {sc.steps[step] ? ` — ${sc.steps[step]!.label}` : ''}
+            {sc.steps[step]?.role ? ` · ${tx(sc.steps[step]!.role!)}` : ''}
+            {sc.steps[step] ? ` — ${tx(sc.steps[step]!.label)}` : ''}
           </span>
           <div className="flex-1" />
-          <span className="t-meta max-w-[40%] truncate" title={sc.source}>
-            {t('sb.source', { src: sc.source })}
+          <span className="t-meta max-w-[40%] truncate" title={tx(sc.source)}>
+            {t('sb.source', { src: tx(sc.source) })}
           </span>
+          {autoplay ? (
+            <button type="button" data-autoplay="" onClick={pauseAuto} className="rounded border border-[var(--color-accent)] px-2 py-0.5 text-[var(--color-accent)]">
+              ⏸ {t('sc.autoplay')}
+            </button>
+          ) : null}
           {step < sc.steps.length - 1 && (
             <button type="button" onClick={next} className="rounded border border-[var(--color-line)] px-2 py-0.5 hover:border-[var(--color-accent)]">
               {t('sb.next')}

@@ -30,18 +30,24 @@ import {
 } from '../../components/primitives';
 import { NODES } from '../../data/corridors';
 import type { I18nKey } from '../../i18n/dict';
-import { useT } from '../../i18n/t';
+import { useT, useTx } from '../../i18n/t';
 import { bandOf } from '../../rules/thresholds';
 import { haversine } from '../../sim/geo';
-import type { Vehicle } from '../../sim/types';
-import { useAlerts, useEvents, useSettings, useSim, world } from '../../store';
+import { tripIdOf, type Vehicle } from '../../sim/types';
+import { useAlerts, useEvents, useSelection, useSettings, useSim, world } from '../../store';
+import { useForecast } from '../../store/forecast';
+import { useHashQuery } from '../../app/App';
+import { TripTab } from './TripTab';
+import { LevelBadge } from '../alerts/sop';
 
-type TabId = 'ops' | 'cctv' | 'incident';
+type TabId = 'trip' | 'ops' | 'cctv' | 'incident';
 
 /** Rows the incident tab will render before it stops and says how many it withheld. */
 const MAX_ALERT_ROWS = 25;
 
 const TABS: { id: TabId; key: I18nKey }[] = [
+  // PTCC drill-down: the trip - driver, position, speed, every stop vs schedule and norm
+  { id: 'trip', key: 'trip.tab' },
   { id: 'ops', key: 'veh.tabOps' },
   { id: 'cctv', key: 'veh.tabCctv' },
   { id: 'incident', key: 'veh.tabIncident' },
@@ -100,7 +106,19 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
   const snap = useSim((s) => s.snap);
   const alerts = useAlerts((s) => s.alerts);
   const events = useEvents((s) => s.events);
-  const [tab, setTab] = useState<TabId>('ops');
+  // Arriving from an alert (`?alert=`) opens the trip; otherwise the source-data tab as before.
+  const query = useHashQuery();
+  const fromAlert = query.get('alert');
+  const fromForecast = query.get('forecast');
+  const forecastH = Number(query.get('h'));
+  const fromMap = query.get('from') === 'map';
+  // Map drill-down lands on the operational trip context promised by the hover
+  // card; direct/deep links retain the established source-data landing tab.
+  const [tab, setTab] = useState<TabId>(fromAlert || fromForecast || fromMap ? 'trip' : 'ops');
+  const forecasts = useForecast((s) => s.byHorizon);
+  const sourceForecast = fromForecast
+    ? ([15, 30, 45, 60] as const).flatMap((h) => forecasts[h]).find((f) => f.id === fromForecast) ?? null
+    : null;
 
   const identity = world.vehicleById.get(vehicleId);
   // Live values come from the snapshot, never from the world object, so the card
@@ -113,7 +131,9 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
   const myAlerts = useMemo(() => alerts.filter((a) => a.vehicle_id === vehicleId), [alerts, vehicleId]);
   const myEvents = useMemo(() => events.filter((e) => e.bus_number === vehicleId), [events, vehicleId]);
   // Highest-impact alert answers "what is happening" - the feed is already sorted by it.
-  const lead = myAlerts[0] ?? null;
+  // Arriving from a route-level alert (`?alert=delay_sop:R7`) the vehicle has none of its
+  // own, so the alert that brought us here answers it first.
+  const lead = (fromAlert ? alerts.find((a) => a.id === fromAlert) : undefined) ?? myAlerts[0] ?? null;
 
   /*
    * A bus that has left service, or an id typed into the hash that never existed.
@@ -145,7 +165,7 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
       <div className="flex shrink-0 items-center justify-between gap-2">
         <DrillBreadcrumb
           path={[
-            { key: 'drill.network', onClick: () => { location.hash = '#/command'; } },
+            { key: 'drill.network', onClick: () => { location.hash = fromMap ? '#/map' : '#/command'; } },
             { key: 'drill.route', label: v.route_id, onClick: () => { location.hash = '#/regularity'; } },
             { key: 'drill.vehicle', label: v.vehicle_id },
             { key: 'drill.detail' },
@@ -154,13 +174,75 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
         <EvidenceTag label="CONFIRMED" cite="S5 · Table 8" />
       </div>
 
-      {/* ------------------------------------------------ S5: the four key questions */}
-      <div className="grid shrink-0 grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+      {fromAlert || sourceForecast ? (
+        <div
+          className={`flex shrink-0 flex-wrap items-center gap-2 rounded border-l-4 bg-[var(--color-bg2)] px-3 py-2 ${sourceForecast ? 'border-l-[var(--color-forecast)]' : 'border-l-[var(--color-sev-warn)]'}`}
+          data-vehicle-source-context={sourceForecast ? 'forecast' : 'alert'}
+        >
+          <StatusPill tone={sourceForecast ? 'neutral' : 'warn'}>{sourceForecast ? t('fc.tag') : t('uxveh.actualAlert')}</StatusPill>
+          <span className="t-body min-w-0 flex-1">
+            {sourceForecast
+              ? t('uxveh.openedFromForecast', { horizon: sourceForecast.horizon_min, chance: Math.round(sourceForecast.probability * 100) })
+              : t('uxveh.openedFromAlert', { id: fromAlert ?? EM_DASH })}
+          </span>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (sourceForecast) location.hash = `#/forecast?h=${Number.isFinite(forecastH) ? forecastH : sourceForecast.horizon_min}&id=${encodeURIComponent(sourceForecast.id)}`;
+              else if (fromAlert) { useSelection.getState().selectAlert(fromAlert); location.hash = '#/alerts'; }
+            }}
+          >
+            {t('uxveh.returnSource')} →
+          </Button>
+        </div>
+      ) : null}
+
+      {/* ---- S5 header strip: the vehicle card facts + the four key questions, one row */}
+      <div className="grid shrink-0 grid-cols-1 gap-2 md:grid-cols-3 xl:grid-cols-5">
+        <section className="panel flex min-w-0 flex-col gap-1 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="panel-title truncate">{t('veh.bus', { id: v.vehicle_id })}</span>
+            <StatusPill tone={v.status === 'in_service' ? 'ok' : v.status === 'breakdown' ? 'crit' : 'neutral'}>
+              {t(statusKey)}
+            </StatusPill>
+          </div>
+          <dl className="t-body flex flex-col gap-0.5">
+            <Field label={t('map.popTrip')}>
+              <span className="num">{tripIdOf(v)}</span>
+            </Field>
+            <Field label={t('map.popProgress')}>
+              <span className="num">{intOr(v.trip_progress * 100)} % · {v.route_id}</span>
+            </Field>
+            <Field label={t('veh.delay')}>
+              <span className="num" style={{ color: devColor(v.schedule_deviation, th.schedule_deviation_s) }}>
+                {minOr(v.schedule_deviation)} {t('unit.min')}
+              </span>
+            </Field>
+            <Field label={t('veh.occupancy')}>
+              <span className="num" style={{ color: band.color }}>
+                {loadPct === null ? EM_DASH : `${t(band.key)} (${intOr(loadPct)} %)`}
+              </span>
+            </Field>
+          </dl>
+        </section>
+
         <QBox titleKey="q.what">
           {lead ? (
-            <div className="flex flex-col gap-1">
-              <SeverityChip severity={lead.severity} size="sm" />
+            <div className="flex min-w-0 flex-col gap-1">
+              <span className="flex flex-wrap items-center gap-1">
+                {lead.level ? <LevelBadge level={lead.level} /> : null}
+                <SeverityChip severity={lead.severity} size="sm" />
+              </span>
               <span className="text-[var(--color-text1)]">{t(lead.title_key as I18nKey, lead.params)}</span>
+              {lead.vehicle_id !== vehicleId && lead.route_id ? (
+                <span className="t-meta">{t('uxveh.routeAlert', { route: lead.route_id })}</span>
+              ) : null}
+            </div>
+          ) : sourceForecast ? (
+            <div className="flex min-w-0 flex-col gap-1">
+              <span className="text-[var(--color-forecast)]">{t('fc.tag')} · +{sourceForecast.horizon_min} {t('unit.min')}</span>
+              <span className="text-[var(--color-text1)]">{t(sourceForecast.title_key as I18nKey, sourceForecast.params)}</span>
+              <span className="t-meta">{t('uxveh.forecastNotActual')}</span>
             </div>
           ) : (
             <span>{t('veh.noAlert')}</span>
@@ -169,9 +251,10 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
 
         <QBox titleKey="q.where">
           <div className="flex flex-col gap-1">
-            <span className="text-[var(--color-text1)]">{place}</span>
+            {/* A long place name must wrap inside the box, not widen it. */}
+            <span className="break-words text-[var(--color-text1)]">{place}</span>
             <span className="num">
-              {t('veh.nextStop')}: {fixOr(v.distance_to_next_stop_m / 1000, 1)} km
+              {t('veh.nextStop')}: {fixOr(v.distance_to_next_stop_m / 1000, 1)} {t('unit.km')}
               {nextStop ? ` · ${lang === 'mn' ? nextStop.name_mn : nextStop.name_en}` : ''}
             </span>
           </div>
@@ -181,7 +264,7 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
           {/* The breaching source row IS the explanation - no AI involved (Tier 1). */}
           <div className="flex flex-col gap-1">
             <span className="num text-[var(--color-text1)]">
-              {t('veh.speed')} {intOr(v.speed)} km/h · {minOr(v.schedule_deviation)} min
+              {t('veh.speed')} {intOr(v.speed)} {t('unit.kmh')} · {minOr(v.schedule_deviation)} {t('unit.min')}
             </span>
             {lead ? (
               <span className="num">
@@ -192,48 +275,34 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
                   unit: paramOr(lead.metric.unit),
                 })}
               </span>
+            ) : sourceForecast?.terms ? (
+              <span className="num text-[var(--color-forecast)]">
+                {t('forecast.liveVsNormal')}: {minOr(sourceForecast.terms.drift_s)} {t('unit.min')} · {t('forecast.confidence')}: {Math.round(sourceForecast.confidence * 100)}%
+              </span>
             ) : null}
           </div>
         </QBox>
 
         <QBox titleKey="q.response">
-          <Button size="sm" onClick={() => { location.hash = '#/alerts'; }}>
-            {t('veh.playbook')} →
-          </Button>
+          <div className="flex flex-col items-start gap-1">
+            <Button size="sm" onClick={() => {
+              if (sourceForecast) location.hash = `#/forecast?h=${sourceForecast.horizon_min}&id=${encodeURIComponent(sourceForecast.id)}`;
+              else if (lead) { useSelection.getState().selectAlert(lead.id); location.hash = '#/alerts'; }
+              else location.hash = '#/alerts';
+            }}>
+              {sourceForecast ? t('uxveh.reviewPreparation') : t('veh.playbook')} →
+            </Button>
+            {sourceForecast ? <span className="t-meta">{t('uxveh.forecastResponseNote')}</span> : null}
+            <a className="t-meta text-[var(--color-accent)] hover:underline" href={`#/analytics?tab=route&route=${encodeURIComponent(v.route_id)}`}>
+              {t('forecast.openHistorical')} →
+            </a>
+          </div>
         </QBox>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-12 gap-2">
-        {/* -------------------------------------------------------- S5 vehicle card */}
-        <Panel title={t('veh.bus', { id: v.vehicle_id })} className="col-span-12 lg:col-span-3" bodyClassName="p-3">
-          <dl className="t-body flex flex-col gap-2">
-            <Field label={t('veh.delay')}>
-              <span className="num" style={{ color: devColor(v.schedule_deviation, th.schedule_deviation_s) }}>
-                {minOr(v.schedule_deviation)} min
-              </span>
-            </Field>
-            <Field label={t('veh.location')}>
-              {/* A long place name must wrap inside the card, not widen it. */}
-              <span className="break-words text-[var(--color-text1)]">{place}</span>
-            </Field>
-            <Field label={t('veh.nextStop')}>
-              <span className="num">{fixOr(v.distance_to_next_stop_m / 1000, 1)} km</span>
-            </Field>
-            <Field label={t('veh.occupancy')}>
-              <span className="num" style={{ color: band.color }}>
-                {loadPct === null ? EM_DASH : `${t(band.key)} (${intOr(loadPct)} %)`}
-              </span>
-            </Field>
-            <Field label={t('veh.status')}>
-              <StatusPill tone={v.status === 'in_service' ? 'ok' : v.status === 'breakdown' ? 'crit' : 'neutral'}>
-                {t(statusKey)}
-              </StatusPill>
-            </Field>
-          </dl>
-        </Panel>
-
+      <div className="flex min-h-0 flex-1 flex-col">
         {/* ------------------------------------------------------------- three tabs */}
-        <section className="panel col-span-12 flex min-h-0 flex-col lg:col-span-9">
+        <section className="panel flex min-h-0 flex-1 flex-col">
           {/* flex-wrap, not overflow: at a narrow width the third tab drops to a
               second row instead of running off the edge of the panel. */}
           <div role="tablist" className="flex shrink-0 flex-wrap gap-1 border-b border-[var(--color-line)] px-2">
@@ -254,7 +323,8 @@ export default function VehicleDetail({ vehicleId }: { vehicleId: string }) {
               </button>
             ))}
           </div>
-          <div className="min-h-0 flex-1 overflow-auto p-3">
+          <div className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
+            {tab === 'trip' ? <TripTab v={v} fromAlert={fromAlert} /> : null}
             {tab === 'ops' ? <OpsTab v={v} /> : null}
             {tab === 'cctv' ? <CctvTab v={v} place={place} /> : null}
             {tab === 'incident' ? (
@@ -278,8 +348,8 @@ function OpsTab({ v }: { v: Vehicle }) {
   // not a label.
   const rows: { key: I18nKey; value: string; source: 'UB Card' | 'T-Box'; note?: string }[] = [
     { key: 'veh.time', value: v.timestamp.slice(11, 19), source: 'UB Card' },
-    { key: 'veh.speed', value: `${intOr(v.speed)} km/h`, source: 'UB Card', note: t('veh.speedNote') },
-    { key: 'veh.scheduleDeviation', value: `${minOr(v.schedule_deviation)} min`, source: 'UB Card' },
+    { key: 'veh.speed', value: `${intOr(v.speed)} ${t('unit.kmh')}`, source: 'UB Card', note: t('veh.speedNote') },
+    { key: 'veh.scheduleDeviation', value: `${minOr(v.schedule_deviation)} ${t('unit.min')}`, source: 'UB Card' },
     // A bus with capacity 0 printed "12 / 0 (Infinity %)". It now prints the counts it
     // really has and an em dash where the percentage cannot exist.
     { key: 'veh.passengerLoad', value: `${intOr(v.pax_count)} / ${intOr(v.capacity)} (${loadPct === null ? EM_DASH : `${intOr(loadPct)} %`})`, source: 'UB Card' },
@@ -301,7 +371,8 @@ function OpsTab({ v }: { v: Vehicle }) {
   ];
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      <div className="flex min-w-0 flex-col gap-3">
       <table className="t-body w-full">
         <thead>
           <tr className="t-meta text-left uppercase tracking-wider">
@@ -336,11 +407,12 @@ function OpsTab({ v }: { v: Vehicle }) {
       <p className="t-meta leading-snug">
         <span style={{ color: 'var(--color-sev-warn)' }}>*</span> {t('veh.speedNote')}
       </p>
+      </div>
 
       {/* Same collapsible surface as every other panel in the app, instead of a
           hand-rolled <details>. Collapsed it still names the vehicle it belongs to. */}
-      <Panel collapsible defaultOpen={false} title={t('veh.rawIcd')} summary={v.vehicle_id} bodyClassName="px-3 py-2">
-        <dl className="t-meta grid grid-cols-2 gap-x-4 gap-y-1 md:grid-cols-4">
+      <Panel collapsible defaultOpen title={t('veh.rawIcd')} summary={v.vehicle_id} bodyClassName="px-3 py-2">
+        <dl className="t-meta grid grid-cols-2 gap-x-4 gap-y-2">
           {icd.map(([k, val]) => (
             <div key={k} className="flex flex-col">
               <dt className="num text-[var(--color-text3)]">{k}</dt>
@@ -357,6 +429,7 @@ function OpsTab({ v }: { v: Vehicle }) {
 
 function CctvTab({ v, place }: { v: Vehicle; place: string }) {
   const t = useT();
+  const tx = useTx();
   // The form only re-captions the placeholder. There is no footage: pretending to
   // retrieve any would be the one thing in this demo that is a lie.
   const [bus, setBus] = useState(v.vehicle_id);
@@ -372,13 +445,13 @@ function CctvTab({ v, place }: { v: Vehicle; place: string }) {
     'num rounded border border-[var(--color-line)] bg-[var(--color-bg3)] px-2 py-1 text-[var(--color-text1)]';
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(260px,2fr)]">
       {/*
        * Four stacked layers in one aspect-video box. Each takes its z-index from the
        * token scale (never a raw z-* utility), and the two corner captions are
        * width-capped so a long place/timestamp cannot slide under the centred badge.
        */}
-      <div className="relative flex aspect-video max-h-[320px] w-full items-center justify-center overflow-hidden rounded border border-[var(--color-line)] bg-[var(--color-bg0)]">
+      <div className="relative flex aspect-video max-h-[60vh] w-full items-center justify-center overflow-hidden rounded border border-[var(--color-line)] bg-[var(--color-bg0)]">
         <div
           className="absolute inset-0 opacity-30"
           style={{
@@ -415,6 +488,7 @@ function CctvTab({ v, place }: { v: Vehicle; place: string }) {
         </span>
       </div>
 
+      <div className="flex min-w-0 flex-col gap-3">
       <form
         className="t-body flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
@@ -423,7 +497,7 @@ function CctvTab({ v, place }: { v: Vehicle; place: string }) {
         }}
       >
         <label className="flex flex-col gap-1">
-          <span className="num text-[var(--color-text3)]">vehicle_id</span>
+          <span className="num text-[var(--color-text3)]">{tx('vehicle_id')}</span>
           <input value={bus} onChange={(e) => setBus(e.target.value)} className={`w-28 ${inputCls}`} />
         </label>
         <label className="flex min-w-0 flex-col gap-1">
@@ -454,6 +528,7 @@ function CctvTab({ v, place }: { v: Vehicle; place: string }) {
           ))
         )}
       </div>
+      </div>
     </div>
   );
 }
@@ -480,7 +555,7 @@ function IncidentTab({
   // Headed, never merged: the three-level ALERT scale (L1182-L1185) and the
   // five-level EVENT scale (R1433-R1440) stay visibly separate groups.
   return (
-    <div className="t-body flex flex-col gap-3">
+    <div className={`t-body grid grid-cols-1 items-start gap-4 ${alerts.length > 0 && events.length > 0 ? 'xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]' : ''}`}>
       {alerts.length > 0 ? (
         <section className="flex flex-col gap-2">
           <h3 className="panel-title">{t('alerts.tabAlerts')}</h3>

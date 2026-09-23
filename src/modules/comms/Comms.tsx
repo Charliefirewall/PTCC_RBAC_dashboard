@@ -16,6 +16,7 @@
  *        operator, severe congestion -> TCC) are rule-derived from open events.
  */
 
+import { useTx } from '../../i18n/t';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useComms, useEvents, useSelection, useSettings } from '../../store';
 import type { CoordinationMessage, EmergencyEvent, PassengerMessage } from '../../sim/types';
@@ -23,6 +24,7 @@ import { hhmmss, simSecondsOf } from '../../sim/engine';
 import type { I18nKey } from '../../i18n/dict';
 import { useT } from '../../i18n/t';
 import { Empty, EvidenceTag, Panel, StatusPill } from '../../components/primitives';
+import { can } from '../roles/roles';
 
 type PaxCategory = PassengerMessage['category'];
 type Channel = PassengerMessage['channels'][number];
@@ -107,18 +109,54 @@ export default function Comms() {
         </div>
       </div>
 
+      <PendingWorkSummary />
+
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-auto xl:grid-cols-2">
         <div className="flex flex-col gap-2">
           <PassengerComposer event={selected} />
-          <PassengerLog />
+          <div id="passenger-work"><PassengerLog /></div>
         </div>
         <div className="flex flex-col gap-2">
           <AutoDrafts onPick={(d) => setPicked((p) => ({ draft: d, n: (p?.n ?? 0) + 1 }))} />
           <CoordinationComposer key={picked?.n ?? 0} event={selected} prefill={picked?.draft} />
-          <CoordinationLog />
+          <div id="coordination-work"><CoordinationLog /></div>
         </div>
       </div>
     </div>
+  );
+}
+
+function PendingWorkSummary() {
+  const t = useT();
+  const passenger = useComms((s) => s.passenger);
+  const coordination = useComms((s) => s.coordination);
+  const pendingPassenger = passenger.filter((m) => m.status === 'pending_approval').length;
+  const drafts = coordination.filter((m) => m.status === 'draft');
+  const actual = drafts.filter((m) => m.intent === 'actual_l3_escalation').length;
+  const escalation = drafts.filter((m) => m.intent === 'escalation_request').length;
+  const proactive = drafts.filter((m) => m.intent === 'proactive_proposal').length;
+  const total = pendingPassenger + drafts.length;
+  const cells = [
+    { key: 'passenger', n: pendingPassenger, label: t('comms.pendingPassenger'), target: 'passenger-work', tone: 'var(--color-sev-warn)' },
+    { key: 'actual', n: actual, label: t('comms.actualL3Drafts'), target: 'coordination-work', tone: 'var(--color-sev-crit)' },
+    { key: 'escalation', n: escalation, label: t('comms.escalationRequests'), target: 'coordination-work', tone: 'var(--color-forecast)' },
+    { key: 'proactive', n: proactive, label: t('comms.proactiveDrafts'), target: 'coordination-work', tone: 'var(--color-forecast)' },
+  ];
+  return (
+    <section className="panel shrink-0 px-3 py-2" data-comms-pending-summary="">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-[14rem] flex-1">
+          <div className="panel-title">{t('comms.pendingWork')}</div>
+          <p className="t-meta">{total ? t('comms.pendingWorkHint', { n: total }) : t('comms.pendingWorkClear')}</p>
+        </div>
+        {cells.map((c) => (
+          <button key={c.key} type="button" onClick={() => document.getElementById(c.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })} className="flex min-w-[9rem] items-center gap-2 rounded border border-[var(--color-line)] px-2 py-1 text-left hover:bg-[var(--color-bg2)]">
+            <span className="num text-[16px] font-semibold" style={{ color: c.tone }}>{c.n}</span>
+            <span className="t-meta">{c.label}</span>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -479,14 +517,20 @@ function CoordinationComposer({ event, prefill }: { event: EmergencyEvent | unde
 
 function CoordinationLog() {
   const t = useT();
+  const tx = useTx();
   const msgs = useComms((s) => s.coordination);
-  const shown = msgs.slice(0, LOG_LIMIT);
+  const role = useSettings((s) => s.role);
+  // Human work first; retain newest-first order inside each status group.
+  const ordered = [...msgs].sort((a, b) => Number(b.status === 'draft') - Number(a.status === 'draft'));
+  const shown = ordered.slice(0, LOG_LIMIT);
+  // An SOP draft is waiting for a person to send it: open the log so it is seen.
+  const hasDraft = msgs.some((m) => m.status === 'draft');
   return (
     <Panel
       titleKey="comms.fields8"
       className="shrink-0"
       collapsible
-      defaultOpen={false}
+      defaultOpen={hasDraft}
       summary={msgs.length === 0 ? t('comms.empty') : String(msgs.length)}
     >
       {msgs.length === 0 ? (
@@ -494,19 +538,99 @@ function CoordinationLog() {
       ) : (
         <ul className="p-2">
           {shown.map((m) => (
-            <li key={m.communication_id} className="mb-2 rounded border border-[var(--color-line)] p-2">
-              <div className="flex min-w-0 items-center gap-2">
+            <li
+              key={m.communication_id}
+              data-coord={m.status ?? 'sent'}
+              data-provenance={m.provenance ?? 'manual'}
+              data-intent={m.intent ?? 'coordination'}
+              className={`mb-2 rounded border p-2 ${m.status === 'draft' && m.intent === 'actual_l3_escalation' ? 'border-[var(--color-sev-crit)]' : m.status === 'draft' ? 'border-[var(--color-forecast)]' : 'border-[var(--color-line)]'}`}
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className="num t-meta min-w-0 truncate">{m.communication_id}</span>
                 <StatusPill tone="info">{t(`comms.type.${m.message_type}` as I18nKey)}</StatusPill>
+                {/* PTCC SOP: L1 messages the system sent itself; L3 drafts a person sends. */}
+                {m.auto ? <StatusPill tone={m.status === 'revoked' ? 'neutral' : 'ok'}>{t('sop.auto')}</StatusPill> : null}
+                {m.status === 'revoked' ? <StatusPill tone="neutral">{t('sop.revoked')}</StatusPill> : null}
+                {m.status === 'draft' ? (
+                  <>
+                    <StatusPill tone={m.intent === 'actual_l3_escalation' ? 'crit' : 'warn'}>
+                      {m.intent === 'proactive_proposal'
+                        ? t('comms.proactiveProposal')
+                        : m.intent === 'escalation_request'
+                          ? t('comms.escalationRequest')
+                          : t('sop.draft')}
+                    </StatusPill>
+                    <button
+                      type="button"
+                      data-send-draft=""
+                      disabled={!can(role, 'send_coordination')}
+                      onClick={() => useComms.getState().sendDraft(m.communication_id, role)}
+                      title={!can(role, 'send_coordination') ? t('comms.sendNotPermitted') : m.recipient === 'tcc' ? t('comms.telephoneHandoffHint') : undefined}
+                      className="rounded border border-[var(--color-accent)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-accent)] disabled:opacity-40"
+                    >
+                      {m.recipient === 'tcc' ? t('comms.recordTelephoneHandoff') : t('sop.sendDraft')}
+                    </button>
+                  </>
+                ) : null}
+                {m.auto && m.status !== 'revoked' ? (
+                  <button
+                    type="button"
+                    disabled={!can(role, 'revoke_auto_action')}
+                    onClick={() => useComms.getState().revoke(m.communication_id, role)}
+                    className="rounded border border-[var(--color-line)] px-2 py-0.5 text-[11px] text-[var(--color-text2)] disabled:opacity-40"
+                  >
+                    {t('sop.revoke')}
+                  </button>
+                ) : null}
                 <span className="num t-meta ml-auto shrink-0">{clockOf(m.sent_at)}</span>
               </div>
               <dl className="t-body mt-1 grid grid-cols-1 gap-x-3 sm:grid-cols-2">
-                <Row label={t('comms.linkedEvent')} value={m.event_id ?? t('comms.noEvent')} />
+                <Row label={t('comms.linkedEvent')} value={m.event_id ?? (m.alert_id ? tx(m.alert_id) : t('comms.noEvent'))} />
                 <Row label={t('comms.recipient')} value={t(`rcpt.${m.recipient}` as I18nKey)} />
-                <Row label={t('comms.channel')} value={m.channel} />
-                <Row label={t('ev.actor')} value={m.operator} />
+                <Row label={t('comms.channel')} value={tx(m.channel)} />
+                <Row label={t('ev.actor')} value={tx(m.operator)} />
               </dl>
-              <p className="t-body mt-1 min-w-0 break-words text-[var(--color-text2)]">{m.content}</p>
+              {m.reason ? (
+                <p className="t-body mt-1 min-w-0 break-words" data-coord-reason="">
+                  <span className="font-medium">{t('comms.reason')}:</span> {m.reason}
+                </p>
+              ) : null}
+              {m.recommended_action ? (
+                <p className="t-body mt-1 min-w-0 break-words" data-coord-action="">
+                  <span className="font-medium">{t('comms.recommendedAction')}:</span> {m.recommended_action}
+                </p>
+              ) : null}
+              {m.evidence?.length ? (
+                <div className="t-meta mt-1 rounded bg-[var(--color-surface2)] px-2 py-1" data-coord-evidence="">
+                  <span className="font-medium">{t('comms.evidence')}:</span>
+                  <ul className="ml-4 list-disc">
+                    {m.evidence.map((item, i) => <li key={`${m.communication_id}-e-${i}`}>{item}</li>)}
+                  </ul>
+                </div>
+              ) : null}
+              <p className="t-body mt-2 min-w-0 break-words border-t border-[var(--color-line-soft)] pt-2 text-[var(--color-text2)]">{m.content}</p>
+              {m.alert_id || m.event_id || m.context?.route_id ? (
+                <button
+                  type="button"
+                  className="t-meta mt-1 font-semibold text-[var(--color-accent)] hover:underline"
+                  data-coord-source-link=""
+                  onClick={() => {
+                    if (m.alert_id) { useSelection.getState().selectAlert(m.alert_id); location.hash = '#/alerts'; }
+                    else if (m.event_id) { useSelection.getState().selectEvent(m.event_id); location.hash = '#/alerts'; }
+                    else if (m.context?.route_id) {
+                      const q = new URLSearchParams({ tab: 'hotspots', route: m.context.route_id });
+                      location.hash = `#/analytics?${q.toString()}`;
+                    }
+                  }}
+                >
+                  {t('comms.openSource')} →
+                </button>
+              ) : null}
+              {m.acknowledged_at ? (
+                <p className="t-body mt-1 rounded border border-[var(--color-sev-ok)] px-2 py-1 text-[var(--color-sev-ok)]" data-ack="">
+                  ↩ {clockOf(m.acknowledged_at)} · {m.ack_text}
+                </p>
+              ) : null}
             </li>
           ))}
           {msgs.length > shown.length ? (

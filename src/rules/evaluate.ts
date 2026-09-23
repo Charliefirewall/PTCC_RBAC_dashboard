@@ -16,6 +16,8 @@ import { isoAt } from '../sim/engine';
 import type { Alert, AlertType, OperatorId, Route, Severity, SimSnapshot, Vehicle } from '../sim/types';
 import { classifyHeadways, headwaysAlongRoute, routeDeviationStats } from './regularity';
 import type { Thresholds } from './thresholds';
+import { LEVEL_SEVERITY, sopLevel } from './severity';
+import { segmentName } from '../data/segments';
 
 export interface RouteMetrics {
   route_id: string;
@@ -171,6 +173,8 @@ interface Raw {
   pax_affected: number;
   load_pct: number;
   tier: 1 | 3;
+  level?: 1 | 2 | 3;
+  routes_affected?: number;
 }
 
 export interface EvaluateResult {
@@ -196,6 +200,20 @@ export function evaluateRules(
 ): EvaluateResult {
   const raws: Raw[] = [];
   const byId = new Map(snap.routes.map((r) => [r.route_id, r]));
+
+  // ---- PTCC SOP ladder: how many routes are late by >= delay_l1_min right now.
+  // Route MEAN lateness, the same signal the retired schedule_deviation rule used
+  // (plan §13 Q1: switch to max if PTPD defines "affected" per bus).
+  const worstBus = new Map<string, Vehicle>();
+  for (const v of snap.vehicles) {
+    if (v.status !== 'in_service') continue;
+    const w = worstBus.get(v.route_id);
+    if (!w || v.schedule_deviation > w.schedule_deviation) worstBus.set(v.route_id, v);
+  }
+  const late = [...m.per_route.values()]
+    .filter((rm) => rm.vehicles > 0 && byId.get(rm.route_id)?.active && rm.mean_dev_s / 60 >= th.delay_l1_min)
+    .sort((a, b) => b.mean_dev_s - a.mean_dev_s);
+  const nAffected = late.length;
 
   // ---- route-level rules
   for (const rm of m.per_route.values()) {
@@ -236,22 +254,25 @@ export function evaluateRules(
       });
     }
 
-    // schedule deviation (L1053, Top 10)
-    if (Math.abs(rm.mean_dev_s) > th.schedule_deviation_s) {
-      const a = Math.abs(rm.mean_dev_s);
-      const severity: Severity =
-        a > th.schedule_deviation_s * 3 ? 'critical' : a > th.schedule_deviation_s * 2 ? 'warning' : 'informational';
+    // delay SOP (PTCC note: 5 / 15 / 30 min x 1 / 5 routes). Replaces the single-threshold
+    // schedule_deviation rule - same signal, and keeping both would double every delay row.
+    if (rm.mean_dev_s / 60 >= th.delay_l1_min) {
+      const min = rm.mean_dev_s / 60;
+      const level = sopLevel(min, nAffected, th) as 1 | 2 | 3;
+      const bus = worstBus.get(rm.route_id);
       raws.push({
-        rule_id: 'schedule_deviation',
+        rule_id: 'delay_sop',
         type: 'service_deviation',
-        severity,
+        severity: LEVEL_SEVERITY[level],
         route_id: rm.route_id,
         title_key: 'alert.delay',
-        params: { route: rm.route_id, min: Math.round(rm.mean_dev_s / 60) },
-        metric: { name: 'schedule_deviation_s', value: Math.round(rm.mean_dev_s), threshold: th.schedule_deviation_s, unit: 's' },
+        params: { route: rm.route_id, min: Math.round(min), level, n: nAffected, bus: bus?.vehicle_id ?? '' },
+        metric: { name: 'delay_min', value: Math.round(min * 10) / 10, threshold: th.delay_l1_min, unit: 'min' },
         pax_affected: rm.pax,
         load_pct: rm.load_pct,
         tier: 1,
+        level,
+        routes_affected: nAffected,
       });
     }
 
@@ -271,6 +292,38 @@ export function evaluateRules(
         tier: 1,
       });
     }
+  }
+
+  // ---- network delay: several routes late at once. The single carrier of the L3
+  // "communicate with Traffic department" draft - one draft for the incident, not one per route.
+  if (nAffected >= th.routes_affected_l2) {
+    const maxMin = late[0]!.mean_dev_s / 60;
+    const level = sopLevel(maxMin, nAffected, th) as 1 | 2 | 3;
+    // E1: say WHERE - the road segment shared by the most late routes ("Peace Ave jam").
+    // ponytail: English place names in params; the rules layer does not know the UI language.
+    const shared = new Map<string, number>();
+    for (const rm of late) for (const e of byId.get(rm.route_id)?.edges ?? []) shared.set(e.key, (shared.get(e.key) ?? 0) + 1);
+    const corridor_key = [...shared].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0] ?? '';
+    raws.push({
+      rule_id: 'delay_network',
+      type: 'service_deviation',
+      severity: LEVEL_SEVERITY[level],
+      title_key: 'alert.delay_network',
+      params: {
+        n: nAffected,
+        min: Math.round(maxMin),
+        level,
+        routes: late.slice(0, 5).map((r) => r.route_id).join(', '),
+        corridor_key,
+        corridor: corridor_key ? segmentName(corridor_key) : '—',
+      },
+      metric: { name: 'routes_affected', value: nAffected, threshold: th.routes_affected_l2, unit: '' },
+      pax_affected: late.reduce((s2, r) => s2 + r.pax, 0),
+      load_pct: 0,
+      tier: 1,
+      level,
+      routes_affected: nAffected,
+    });
   }
 
   // ---- vehicle-level rules
@@ -367,6 +420,8 @@ export function evaluateRules(
         params: raw.params,
         pax_affected: raw.pax_affected,
         impact_score,
+        level: raw.level,
+        routes_affected: raw.routes_affected,
       };
       alerts.push(updated);
     } else {
@@ -387,6 +442,8 @@ export function evaluateRules(
         impact_score,
         tier: raw.tier,
         acknowledged: false,
+        level: raw.level,
+        routes_affected: raw.routes_affected,
       };
       alerts.push(a);
       raised.push(a);

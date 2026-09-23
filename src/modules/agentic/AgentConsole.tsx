@@ -35,7 +35,7 @@ import { PLAYBOOKS } from '../../rules/playbooks';
 import { hhmmss, simSecondsOf } from '../../sim/engine';
 import type { Alert } from '../../sim/types';
 import type { I18nKey } from '../../i18n/dict';
-import { t as tRaw, useT } from '../../i18n/t';
+import { t as tRaw, useT, useTx } from '../../i18n/t';
 import {
   Button,
   type Column,
@@ -184,6 +184,7 @@ function ConfidenceMeter({ value }: { value: number }) {
 /** Collapsible "Why?" - native <details>, no state, no library. */
 function Why({ d }: { d: AgentDecision }) {
   const t = useT();
+  const tx = useTx();
   return (
     <details className="mt-1.5 rounded border border-[var(--color-line-soft)] bg-[var(--color-bg1)]">
       <summary className="cursor-pointer select-none px-2 py-1 text-[11px] font-semibold" style={{ color: 'var(--color-agent)' }}>
@@ -201,13 +202,13 @@ function Why({ d }: { d: AgentDecision }) {
                 {say(t, step.text)}
                 {step.metric ? (
                   <span className="num ml-1 text-[var(--color-text1)]">
-                    [{step.metric.name} {n(step.metric.value)}
-                    {step.metric.unit} / {t('ag.thresholdShort')} {n(step.metric.threshold)}
-                    {step.metric.unit}]
+                    [{tx(step.metric.name)} {n(step.metric.value)}
+                    {tx(step.metric.unit)} / {t('ag.thresholdShort')} {n(step.metric.threshold)}
+                    {tx(step.metric.unit)}]
                   </span>
                 ) : null}
               </span>
-              <span className="num shrink-0 text-[10px] text-[var(--color-text3)]">{step.cite}</span>
+              <span className="num shrink-0 text-[10px] text-[var(--color-text3)]">{tx(step.cite)}</span>
             </li>
           ))}
         </ol>
@@ -327,6 +328,7 @@ export function DecisionCard({
   onModify?: (alertId: string) => void;
 }) {
   const t = useT();
+  const tx = useTx();
   const approve = useAgentic((s) => s.approve);
   const dismiss = useAgentic((s) => s.dismiss);
   const modify = useAgentic((s) => s.modify);
@@ -367,10 +369,10 @@ export function DecisionCard({
       <div className="mt-1.5 flex flex-wrap items-center gap-2">
         {alert ? <SeverityChip severity={alert.severity} size="sm" /> : null}
         <span className="min-w-0 break-words text-[12px] font-medium">
-          {alert ? t(alert.title_key as I18nKey, alert.params) : (d.alertIds[0] ?? DASH)}
+          {alert ? t(alert.title_key as I18nKey, alert.params) : tx(d.alertIds[0] ?? DASH)}
         </span>
         <span className="num text-[10px] text-[var(--color-text3)]">
-          {d.alertIds[0] ?? DASH}
+          {tx(d.alertIds[0] ?? DASH)}
           {alert ? ` · ${t('alerts.impact')} ${n(alert.impact_score)}` : ''}
         </span>
       </div>
@@ -555,6 +557,7 @@ function DecisionGroupView({
  */
 function AgentCard({ agent, decisions }: { agent: AgentDef; decisions: AgentDecision[] }) {
   const t = useT();
+  const tx = useTx();
   const events = useEvents((s) => s.events);
   const open = decisions.filter((d) => !isHumanStage(d.stage));
   const thinking = open.some((d) => d.stage === 'detected' || d.stage === 'reasoning');
@@ -596,14 +599,14 @@ function AgentCard({ agent, decisions }: { agent: AgentDef; decisions: AgentDeci
           </div>
         ))}
       </dl>
-      <p className="num mt-1 text-[9px] text-[var(--color-text3)]">{agent.cite}</p>
+      <p className="num mt-1 text-[9px] text-[var(--color-text3)]">{tx(agent.cite)}</p>
     </li>
   );
 }
 
 // ---------------------------------------------------------------- console
 
-function decidedCols(t: T): Column<AgentDecision>[] {
+function decidedCols(t: T, tx: (s: string) => string): Column<AgentDecision>[] {
   return [
     { key: 'stage', label: t('ag.col.decision'), render: (d) => <StageChip stage={d.stage} small /> },
     {
@@ -615,14 +618,14 @@ function decidedCols(t: T): Column<AgentDecision>[] {
         </span>
       ),
     },
-    { key: 'alert', label: t('ag.col.alert'), mono: true, render: (d) => d.alertIds[0] ?? DASH },
+    { key: 'alert', label: t('ag.col.alert'), mono: true, render: (d) => tx(d.alertIds[0] ?? DASH) },
     {
       key: 'by',
       label: t('ag.col.by'),
       mono: true,
       render: (d) => (
         <span className="text-[10px] text-[var(--color-text3)]">
-          {d.approvedBy ?? DASH} · {clockOf(d.approvedAt)}
+          {tx(d.approvedBy ?? DASH)} · {clockOf(d.approvedAt)}
           {d.eventId ? ` · ${d.eventId}` : ''}
         </span>
       ),
@@ -632,6 +635,7 @@ function decidedCols(t: T): Column<AgentDecision>[] {
 
 export default function AgentConsole({ onModify }: { onModify?: (alertId: string) => void }) {
   const t = useT();
+  const tx = useTx();
   const decisions = useAgentic((s) => s.decisions);
   const alerts = useAlerts((s) => s.alerts);
 
@@ -683,13 +687,13 @@ export default function AgentConsole({ onModify }: { onModify?: (alertId: string
   }, [queue, byAlert]);
 
   return (
-    <div className="flex h-full min-h-0 gap-2">
+    <div data-agent-console className="flex h-full min-h-0 flex-col gap-2 overflow-auto xl:flex-row xl:overflow-hidden">
       {/* fluid, not a hard 290px: the roster and feed truncated at every width. */}
-      <aside className="flex shrink-0 flex-col gap-2" style={{ width: 'clamp(260px, 24%, 380px)' }}>
+      <aside className="flex w-full shrink-0 flex-col gap-2 xl:w-[clamp(260px,24%,380px)]">
         <Panel
           titleKey="ag.roster"
           right={<EvidenceTag label="ASSUMPTION" cite="agent framing" />}
-          className="max-h-[58%] shrink-0"
+          className="shrink-0 xl:max-h-[58%]"
           bodyClassName="p-1.5"
         >
           <ul className="flex flex-col gap-1.5">
@@ -705,7 +709,7 @@ export default function AgentConsole({ onModify }: { onModify?: (alertId: string
         <AgentActivityFeed />
       </aside>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <div className="flex min-h-[520px] flex-1 flex-col gap-2 xl:min-h-0">
         {/* The autonomy boundary is stated here, once and prominently. It is deliberately
             NOT repeated per card any more (§10.2 opportunity 11). */}
         <header
@@ -757,7 +761,7 @@ export default function AgentConsole({ onModify }: { onModify?: (alertId: string
               this screen that can reach hundreds of rows, so it pages rather than
               rendering all of them. Same table primitive as every other log in the app. */}
           <DataTable
-            columns={decidedCols(t)}
+            columns={decidedCols(t, tx)}
             rows={decided}
             rowKey={(d) => d.id}
             pageSize={12}

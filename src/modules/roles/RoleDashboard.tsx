@@ -95,7 +95,6 @@ export default function RoleDashboard() {
 
       <PermissionStrip />
 
-      {/* Fixed 4 columns: this is a control-room app, it is never rendered narrow. */}
       {/* auto-rows-fr + flex-1: rows share the available height instead of collapsing to
           content, which left a role with few widgets looking like a half-drawn page.
           Each Panel scrolls internally, so a widget-heavy role degrades gracefully. */}
@@ -109,11 +108,16 @@ export default function RoleDashboard() {
       // switch, so a panel kept the previous role's local state - a collapsed section, a
       // "cannot advance" warning - under a different role's permissions. Remounting on
       // the role is one attribute and makes a stale subscription impossible.
-      <div key={role} className="grid min-h-0 flex-1 auto-rows-fr grid-cols-4 gap-2">
+      <div key={role} data-role-dashboard-grid className="grid min-h-0 flex-1 auto-rows-fr grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {widgets.map((id) => {
           const { span, Comp } = WIDGETS[id];
+          const responsiveSpan =
+            span >= 4 ? 'sm:col-span-2 xl:col-span-4'
+            : span === 3 ? 'sm:col-span-2 xl:col-span-3'
+            : span === 2 ? 'sm:col-span-2 xl:col-span-2'
+            : 'sm:col-span-1 xl:col-span-1';
           return (
-            <div key={id} className="h-full min-w-0 [&>*]:h-full" style={{ gridColumn: `span ${span}` }}>
+            <div key={id} className={`col-span-1 h-full min-w-0 [&>*]:h-full ${responsiveSpan}`}>
               <Comp />
             </div>
           );
