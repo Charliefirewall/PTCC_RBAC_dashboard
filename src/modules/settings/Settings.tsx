@@ -31,7 +31,8 @@ const NUMERIC_KEYS = (Object.keys(DEMO_DEFAULTS) as (keyof Thresholds)[]).filter
 );
 
 /** Group by the source table, in the order the source lists them. */
-const TABLE_ORDER = ['Table 9', 'Table 10', 'Table 11', 'Table 12', 'Table 13', 'Table 14', '—'];
+// 'PTCC input' first: the only group whose VALUES come from the client (PTCC note, Sept 2026).
+const TABLE_ORDER = ['PTCC input', 'Table 9', 'Table 10', 'Table 11', 'Table 12', 'Table 13', 'Table 14', '—'];
 
 const ROLES: RoleId[] = [
   'operations_controller',
@@ -315,7 +316,7 @@ function ThresholdField({ k, value }: { k: keyof Thresholds; value: number }) {
         style={{ accentColor: 'var(--color-accent)' }}
       />
       <div className="flex items-center gap-2">
-        <EvidenceTag label="ASSUMPTION" cite={m.table} />
+        <EvidenceTag label={m.table === 'PTCC input' ? 'CONFIRMED' : 'ASSUMPTION'} cite={m.table} />
         <span className="t-meta uppercase tracking-wider">{t('set.demoDefault')}</span>
       </div>
     </div>

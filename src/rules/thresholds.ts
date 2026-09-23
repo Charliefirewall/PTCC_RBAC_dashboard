@@ -84,6 +84,19 @@ export interface Thresholds extends RegularityThresholds {
   pred_zone_elevated_days: number;
   /** Half-width of the p10-p90 interval at full confidence, per cent of the median. */
   pred_interval_spread_pct: number;
+  /*
+   * PTCC SOP ladder (PTCC "Suggested scenario" note, Sept 2026). The FIRST client-supplied
+   * values in this whole file: delay thresholds 5 / 15 / 30 min and "1 route vs 5 routes".
+   * Table 'PTCC input' so Settings and #/provenance show them as client-sourced.
+   */
+  delay_l1_min: number;
+  delay_l2_min: number;
+  delay_l3_min: number;
+  routes_affected_l2: number;
+  /* Short-term forecast (Extension - outside R1096 scope). Ours, em-dash group. */
+  forecast_min_probability_pct: number;
+  forecast_drift_tau_min: number;
+  forecast_refresh_s: number;
 }
 
 /** Slide 8 heat-map bands - the ONLY threshold set that exists in any source. */
@@ -160,6 +173,15 @@ export const DEMO_DEFAULTS: Thresholds = {
   pred_zone_high_days: 45,
   pred_zone_elevated_days: 120,
   pred_interval_spread_pct: 25,
+  // PTCC SOP ladder - client-supplied
+  delay_l1_min: 5,
+  delay_l2_min: 15,
+  delay_l3_min: 30,
+  routes_affected_l2: 5,
+  // forecast - ours
+  forecast_min_probability_pct: 30,
+  forecast_drift_tau_min: 30,
+  forecast_refresh_s: 30,
 };
 
 /**
@@ -218,4 +240,11 @@ export const THRESHOLD_META: Record<
   pred_zone_high_days: { table: '—', unit: 'd', min: 7, max: 120, step: 1, labelKey: 'th.pred_zone_high_days' },
   pred_zone_elevated_days: { table: '—', unit: 'd', min: 30, max: 365, step: 5, labelKey: 'th.pred_zone_elevated_days' },
   pred_interval_spread_pct: { table: '—', unit: '%', min: 5, max: 60, step: 5, labelKey: 'th.pred_interval_spread_pct' },
+  delay_l1_min: { table: 'PTCC input', unit: 'min', min: 1, max: 30, step: 1, labelKey: 'th.delay_l1_min', sourceValue: '5 (PTCC note, Sept 2026)' },
+  delay_l2_min: { table: 'PTCC input', unit: 'min', min: 5, max: 60, step: 1, labelKey: 'th.delay_l2_min', sourceValue: '15 (PTCC note, Sept 2026)' },
+  delay_l3_min: { table: 'PTCC input', unit: 'min', min: 10, max: 120, step: 5, labelKey: 'th.delay_l3_min', sourceValue: '30 (PTCC note, Sept 2026)' },
+  routes_affected_l2: { table: 'PTCC input', unit: '', min: 2, max: 20, step: 1, labelKey: 'th.routes_affected_l2', sourceValue: '5 (PTCC note, Sept 2026: "1, 5")' },
+  forecast_min_probability_pct: { table: '—', unit: '%', min: 5, max: 95, step: 5, labelKey: 'th.forecast_min_probability_pct' },
+  forecast_drift_tau_min: { table: '—', unit: 'min', min: 5, max: 120, step: 5, labelKey: 'th.forecast_drift_tau_min' },
+  forecast_refresh_s: { table: '—', unit: 's', min: 5, max: 300, step: 5, labelKey: 'th.forecast_refresh_s' },
 };

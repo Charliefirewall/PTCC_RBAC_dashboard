@@ -11,10 +11,12 @@
  */
 
 import { routeCum } from '../data/build';
+import { segmentForHop } from '../data/segments';
+import { Ring } from './ring';
 import { pointAlong } from './geo';
 import { makeStreams, mulberry32, type Streams } from './rng';
 import { daypartOf } from './timetable';
-import type { Route, SimSnapshot, Stop, Vehicle, World } from './types';
+import { tripIdOf, type Route, type SimSnapshot, type Stop, type Vehicle, type World } from './types';
 
 export const TICK_DT_S = 5;
 
@@ -96,8 +98,13 @@ const LAYOVER_BASE_S = 120;
  *  CALIBRATION KNOBS: raise either and the fleet runs early, lower it and every bus
  *  drifts late, because dwell and queueing are now real standing time. Set so mean
  *  schedule deviation stays centred near zero across a 6-hour run. */
-const PLANNED_DWELL_S = 20;
-const PLAN_PAD = 0.93;
+export const PLANNED_DWELL_S = 20;
+export const PLAN_PAD = 0.93;
+
+/** One sim hour of speed samples per bus (720 x 5 s). */
+export const SPEED_LOG_N = 720;
+/** Live observations kept per road segment. */
+export const SEG_OBS_N = 64;
 
 /** Mean reversion per tick on schedule deviation. Deviation is a random walk fed by
  *  dwell, congestion and queueing; without a pull towards zero every bus reaches one
@@ -153,7 +160,7 @@ function nextStopAlong(r: Route, sNow: number, fwd: boolean): Stop | null {
   return null;
 }
 
-function speedFor(r: Route, centrality: number, peak: boolean, sp: SpeedProfile): number {
+export function speedFor(r: Route, centrality: number, peak: boolean, sp: SpeedProfile): number {
   if (r.kind === 'suburban') return peak ? sp.suburbanPeak : sp.suburbanOff;
   if (centrality >= 2) return peak ? sp.centralPeak : sp.centralOff;
   if (centrality === 1) return peak ? sp.arterialPeak : sp.arterialOff;
@@ -161,7 +168,7 @@ function speedFor(r: Route, centrality: number, peak: boolean, sp: SpeedProfile)
 }
 
 /** Rough centrality of a vehicle's current position: distance from city centre. */
-function centralityAt(lon: number, lat: number): number {
+export function centralityAt(lon: number, lat: number): number {
   const d = Math.hypot((lon - 106.9176) * 74, (lat - 47.9188) * 111); // km-ish
   if (d < 3.5) return 2;
   if (d < 8) return 1;
@@ -264,6 +271,13 @@ export class SimEngine {
       }
       this.step(v, r, t, peak, iso);
     }
+    // per-bus speed history for the drill-down ("historical data of bus speed in this trip")
+    for (const v of w.vehicles) {
+      if (v.status !== 'in_service') continue;
+      let ring = w.speedLog.get(v.vehicle_id);
+      if (!ring) w.speedLog.set(v.vehicle_id, (ring = new Ring(SPEED_LOG_N)));
+      ring.push(v.speed);
+    }
     // background telematics noise (T-Box events, L496-L500)
     this.telematics(t);
     this.devices(t);
@@ -307,6 +321,9 @@ export class SimEngine {
     const total = Math.max(r.length_m, 1);
     const ch = this.characterOf(v.vehicle_id);
     v.timestamp = iso;
+    // Buses that were already mid-trip when the sim booted: the trip "starts" when we
+    // first see it. Their log therefore begins mid-route, which the UI shows as is.
+    if (v.trip_start_s === undefined) v.trip_start_s = t;
 
     // ---- release a finished dwell or terminus layover -----------------------
     const holdUntil = v.hold_until_s ?? 0;
@@ -318,6 +335,12 @@ export class SimEngine {
         // shape fraction is mirrored, so the bus does not jump back to the depot end.
         v.direction = v.direction === 0 ? 1 : 0;
         v.trip_progress = 0;
+        // New trip. Keep this trip's log and the previous one (the drill-down compares
+        // against it); anything older is dropped so memory stays flat all session.
+        const seq = (v.trip_seq ?? 0) + 1;
+        w.tripLog.delete(tripIdOf(v, seq - 2));
+        v.trip_seq = seq;
+        v.trip_start_s = t;
       }
     }
 
@@ -472,8 +495,51 @@ export class SimEngine {
     // behind). The per-driver dwellK is what stops two buses on one corridor behaving
     // identically at the same stop.
     const dwell = (8 + 1.1 * (boarded + alighted)) * ch.dwellK;
+    this.logArrival(v, r, stop_id, t, dwell, boarded);
     v.schedule_deviation = clamp(v.schedule_deviation - PLANNED_DWELL_S, -900, 3600);
     return dwell;
+  }
+
+  /**
+   * Append one stop to the trip log and attribute the deviation gained since the
+   * previous stop to the road segment the hop ran on. Called BEFORE the planned-dwell
+   * credit, so dev_s is the deviation on arrival and planned arrival = t - dev_s.
+   */
+  private logArrival(v: Vehicle, r: Route, stop_id: string, t: number, dwell: number, boarded: number): void {
+    const w = this.world;
+    const idx = r.stops.findIndex((s) => s.stop_id === stop_id);
+    if (idx < 0) return;
+    const fwd = v.direction === 0;
+    const trip_id = tripIdOf(v);
+    let log = w.tripLog.get(trip_id);
+    if (!log) w.tripLog.set(trip_id, (log = []));
+    const prev = log[log.length - 1];
+    const prevIdx = fwd ? idx - 1 : idx + 1;
+    const prevStop = r.stops[prevIdx];
+    const here = r.stops[idx]!;
+    const seg_key = prevStop ? segmentForHop(r, prevStop.dist_m, here.dist_m) : null;
+    const hop_excess_s = prev ? v.schedule_deviation - prev.dev_s : 0;
+    log.push({
+      trip_id,
+      vehicle_id: v.vehicle_id,
+      route_id: r.route_id,
+      stop_idx: fwd ? idx : r.stops.length - 1 - idx,
+      stop_id,
+      t_s: t,
+      dev_s: v.schedule_deviation,
+      dwell_s: dwell,
+      pax: v.pax_count,
+      boarded,
+      seg_key,
+      hop_excess_s,
+    });
+    if (prev && seg_key && prevStop) {
+      const km = Math.max(0.05, Math.abs(here.dist_m - prevStop.dist_m) / 1000);
+      let o = w.segObs.get(seg_key);
+      if (!o) w.segObs.set(seg_key, (o = { v: new Ring(SEG_OBS_N), t: new Ring(SEG_OBS_N) }));
+      o.v.push(hop_excess_s / km);
+      o.t.push(t);
+    }
   }
 
   private telematics(t: number): void {

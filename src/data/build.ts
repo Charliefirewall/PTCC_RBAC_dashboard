@@ -114,10 +114,14 @@ function straightSegment(a: string, b: string): [number, number][] {
  * along the road graph, so page load is fast and every machine gets byte-identical
  * shapes. Nothing here draws from the rng - the shape of a route is data, not chance.
  */
-function toShape(path: string[]): [number, number][] {
+function toShape(path: string[], marks: { key: string; ptIdx: number }[] = []): [number, number][] {
   const pts: [number, number][] = [];
   for (let i = 0; i < path.length - 1; i++) {
     const seg = roadSegment(path[i]!, path[i + 1]!) ?? straightSegment(path[i]!, path[i + 1]!);
+    // Remember where each corridor edge starts on the shape, so delay can later be
+    // attributed to a named road segment. The key is canonical (a < b), as in roads.ts.
+    const [a, b] = [path[i]!, path[i + 1]!];
+    marks.push({ key: a < b ? `${a}|${b}` : `${b}|${a}`, ptIdx: Math.max(0, pts.length - 1) });
     for (const p of seg) {
       const last = pts[pts.length - 1];
       if (last && last[0] === p[0] && last[1] === p[1]) continue;
@@ -205,9 +209,15 @@ export function buildRoutes(seed: number): Route[] {
     const route_id = `R${i}`;
     const kind: 'city' | 'suburban' = i <= ROUTES_CITY ? 'city' : 'suburban';
     const path = HERO[route_id] ?? randomPath(rng, kind === 'city' ? 5 : 4, kind === 'city' ? 9 : 7, kind === 'suburban');
-    const shape = toShape(path);
+    const marks: { key: string; ptIdx: number }[] = [];
+    const shape = toShape(path, marks);
     const cum = cumulative(shape);
     const length_m = cum[cum.length - 1]!;
+    const edges = marks.map((mk, j) => ({
+      key: mk.key,
+      from_m: cum[Math.min(mk.ptIdx, cum.length - 1)]!,
+      to_m: j + 1 < marks.length ? cum[Math.min(marks[j + 1]!.ptIdx, cum.length - 1)]! : length_m,
+    }));
     const stops = makeStops(route_id, shape, cum, path, kind, rng);
     const base = kind === 'city' ? 1 : 1.9;
     routes.push({
@@ -220,6 +230,7 @@ export function buildRoutes(seed: number): Route[] {
       shape,
       length_m,
       stops,
+      edges,
       demand_weight: demandWeight(route_id, kind, rng),
       planned_headway_s:
         route_id === 'R7'
@@ -401,6 +412,9 @@ export function buildWorld(seed: number, startSimTimeS: number): World {
     suspended: new Set(),
     flagUntil: new Map(),
     feed_stale: false,
+    tripLog: new Map(),
+    speedLog: new Map(),
+    segObs: new Map(),
   };
 }
 

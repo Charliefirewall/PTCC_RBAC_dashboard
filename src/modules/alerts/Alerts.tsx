@@ -366,7 +366,7 @@ function eventTypeFor(a: Alert): string {
 
 /** The playbook's first recommended action - the headline the row offers as a button. */
 function headlineAction(a: Alert): { pb: PlaybookId; key: I18nKey } {
-  const pb = playbookFor(eventTypeFor(a));
+  const pb = playbookFor(eventTypeFor(a), a.level);
   return { pb, key: PLAYBOOKS[pb].recommended[0] as I18nKey };
 }
 
@@ -583,10 +583,10 @@ function ValidateForm({ live, seed }: { live: Alert | undefined; seed: Alert }) 
         <div className="rounded border border-[var(--color-line)] bg-[var(--color-bg1)] px-2 py-1.5">
           <span className="panel-title">{t('wl.consequence')}</span>
           <ul className="mt-1 flex flex-col gap-0.5 text-[11px] text-[var(--color-text2)]">
-            {PLAYBOOKS[playbookFor(event_type)].recommended.map((k) => (
+            {PLAYBOOKS[playbookFor(event_type, seed.level)].recommended.map((k) => (
               <li key={k}>· {t(k as I18nKey)}</li>
             ))}
-            {PLAYBOOKS[playbookFor(event_type)].compulsory.map((k) => (
+            {PLAYBOOKS[playbookFor(event_type, seed.level)].compulsory.map((k) => (
               <li key={k} className="text-[var(--color-sev-warn)]">
                 ! {t(k as I18nKey)}
               </li>

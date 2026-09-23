@@ -8,6 +8,8 @@
  * which is a specification error (R1035): 3857 is metres, not decimal degrees.
  */
 
+import type { Ring } from './ring';
+
 export type Lang = 'en' | 'mn';
 export type OperatorId = 'A' | 'B' | 'C';
 export type VehicleStatus = 'in_service' | 'out_of_service' | 'breakdown';
@@ -45,6 +47,42 @@ export interface Route {
   demand_weight: number;
   /** Planned headway in seconds, by daypart. Synthetic - no timetable source exists. */
   planned_headway_s: { amPeak: number; offPeak: number; pmPeak: number; evening: number };
+  /**
+   * The corridor edges this route's shape is made of, in shape order. Kept so delay can
+   * be attributed to a named road segment (PTCC scenario 3b). Optional so hand-written
+   * Route literals in tests still compile.
+   */
+  edges?: RouteEdge[];
+}
+
+/** One corridor edge along a route: canonical key "a|b" (a < b) and its span on the shape. */
+export interface RouteEdge {
+  key: string;
+  from_m: number;
+  to_m: number;
+}
+
+/**
+ * One stop served on one trip - the per-stop log PTCC's drill-down asks for.
+ * The engine keeps `schedule_deviation` as actual - plan at every instant, so the
+ * planned arrival needs no second timetable: planned = t_s - dev_s.
+ */
+export interface StopArrival {
+  trip_id: string;
+  vehicle_id: string;
+  route_id: string;
+  /** index in TRAVEL order (0 = first stop of this trip) */
+  stop_idx: number;
+  stop_id: string;
+  t_s: number;
+  dev_s: number;
+  dwell_s: number;
+  pax: number;
+  boarded: number;
+  /** corridor edge traversed to reach this stop */
+  seg_key: string | null;
+  /** deviation gained since the previous stop, attributed to seg_key */
+  hop_excess_s: number;
 }
 
 export interface Vehicle {
@@ -93,6 +131,14 @@ export interface Vehicle {
   /** Cumulative boardings today - drives ridership + revenue. */
   boardings_today: number;
   km_today: number;
+  /** increments at every turn-round; trip_id = `${vehicle_id}:${trip_seq}` */
+  trip_seq?: number;
+  /** sim seconds the current trip began */
+  trip_start_s?: number;
+}
+
+export function tripIdOf(v: Pick<Vehicle, 'vehicle_id' | 'trip_seq'>, seq = v.trip_seq ?? 0): string {
+  return `${v.vehicle_id}:${seq}`;
 }
 
 export type DeviceState = 'ok' | 'offline';
@@ -124,6 +170,12 @@ export interface World {
    */
   flagUntil: Map<string, number>;
   feed_stale: boolean;
+  /** trip_id -> stops served, in travel order. Current + previous trip per bus. */
+  tripLog: Map<string, StopArrival[]>;
+  /** vehicle_id -> instantaneous speed, one sample per tick (720 = 1 sim hour). */
+  speedLog: Map<string, Ring>;
+  /** segment key -> live deviation gained per km on recent hops, with sim-second stamps. */
+  segObs: Map<string, { v: Ring; t: Ring }>;
 }
 
 export interface SimSnapshot {
@@ -166,6 +218,18 @@ export interface Alert {
   tier: 1 | 3;
   acknowledged: boolean;
   validated_event_id?: string;
+  /** PTCC SOP level (delay rules only): 1 route-level, 2 medium, 3 senior. */
+  level?: 1 | 2 | 3;
+  routes_affected?: number;
+  /** Forecast rows only - never present on a live alert. */
+  forecast?: true;
+  horizon_min?: number;
+  /** chance the level is reached at the horizon, 0..1 */
+  probability?: number;
+  /** model trust, 0..CONFIDENCE_CEILING */
+  confidence?: number;
+  /** L1 auto-notification sent for this alert */
+  auto_comm_id?: string;
 }
 
 // ---------------------------------------------------------------- events (5 levels)
@@ -199,6 +263,9 @@ export type PlaybookId =
   | 'vehicle_breakdown'
   | 'traffic_accident'
   | 'security_incident'
+  | 'delay_l1'
+  | 'delay_l2'
+  | 'delay_l3'
   | 'generic';
 
 export interface ActionItem {
@@ -283,6 +350,13 @@ export interface CoordinationMessage {
   channel: string;
   sent_at: string;
   operator: string;
+  /** absent = sent by a person (every message before the SOP work) */
+  status?: 'draft' | 'sent' | 'revoked';
+  /** sent by the system under the L1 SOP, not by a person */
+  auto?: true;
+  alert_id?: string;
+  revoked_at?: string;
+  revoked_by?: string;
 }
 
 // ---------------------------------------------------------------- roles

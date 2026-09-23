@@ -52,7 +52,7 @@ export const AGENTS: Record<AgentId, AgentDef> = {
     nameKey: 'ag.agent.regularity',
     remitKey: 'ag.remit.regularity',
     tier: 1,
-    rules: ['service_gap', 'bunching', 'schedule_deviation'],
+    rules: ['service_gap', 'bunching', 'delay_sop', 'delay_network'],
     cite: 'L1053-L1055 · Table 11',
   },
   crowding: {
@@ -207,6 +207,8 @@ function metaFor(name: string): { table: string; unit: string } | undefined {
     : name === 'load_pct' ? 'passenger_load_pct'
     : name === 'offline_s' ? 'failure_duration_s'
     : name === 'speed' ? 'overspeed_kmh'
+    : name === 'delay_min' ? 'delay_l1_min'
+    : name === 'routes_affected' ? 'routes_affected_l2'
     : name
   ) as keyof Thresholds;
   return THRESHOLD_META[k];
@@ -263,7 +265,7 @@ function buildDecision(a: Alert, all: readonly Alert[], now_s: number): AgentDec
   // compulsory action. Presentation must never weaken a gate (see rules.test.ts).
   const event_type = eventTypeForAlert(a.rule_id, a.type);
   const severity_level = suggestSeverity(a.severity, a.rule_id);
-  const playbook = playbookFor(event_type);
+  const playbook = playbookFor(event_type, a.level);
   const pb = PLAYBOOKS[playbook];
 
   return {

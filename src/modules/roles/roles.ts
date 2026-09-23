@@ -47,6 +47,10 @@ export const PERMISSIONS = [
   'upload_evidence',
   'configure_thresholds',
   'override_compulsory',
+  // PTCC SOP ladder (Sept 2026). INFERRED: who may undo the system's L1 auto-notification,
+  // and who may raise an L3 escalation to the Traffic department.
+  'revoke_auto_action',
+  'escalate_l3',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -93,7 +97,7 @@ export const ROLE_SPECS: Record<RoleId, RoleSpec> = {
     home: 'command',
     nav: ['dashboard', 'command', 'map', 'regularity', 'passenger', 'alerts', 'health', 'operators', 'copilot', 'agentic', 'analytics', 'roi', 'settings', 'provenance', 'depot', 'platform'],
     widgets: ['networkHealth', 'opsKpi', 'aiAlerts', 'activeIncidents'],
-    can: ['acknowledge_alert', 'create_event', 'advance_stage', 'complete_action', 'send_coordination', 'configure_thresholds'],
+    can: ['acknowledge_alert', 'create_event', 'advance_stage', 'complete_action', 'send_coordination', 'configure_thresholds', 'revoke_auto_action'],
   },
 
   // "PTCC Incident Manager | Internal coordination lead" (R2902). R2919-R2925: assigns
@@ -106,7 +110,7 @@ export const ROLE_SPECS: Record<RoleId, RoleSpec> = {
     home: 'dashboard',
     nav: ['dashboard', 'alerts', 'map', 'command', 'comms', 'copilot', 'agentic', 'analytics'],
     widgets: ['incidentQueue', 'incidentDetail', 'escalation', 'activeIncidents'],
-    can: ['acknowledge_alert', 'create_event', 'advance_stage', 'complete_action', 'escalate_event', 'send_coordination'],
+    can: ['acknowledge_alert', 'create_event', 'advance_stage', 'complete_action', 'escalate_event', 'send_coordination', 'escalate_l3'],
   },
 
   // "Communication Controller | All inter-agency + public messaging" (R2903). No

@@ -33,6 +33,8 @@ import {
 } from '../rules/playbooks';
 import { DEMO_DEFAULTS, type Thresholds } from '../rules/thresholds';
 import { can } from '../modules/roles/roles';
+import { runSop } from './sop';
+import { SIM_DOW } from '../sim/baseline';
 
 // Guarded: this module is imported by i18n and by the rules layer, and vitest runs with
 // environment: 'node' where `location` does not exist - an unguarded read here made the
@@ -40,6 +42,17 @@ import { can } from '../modules/roles/roles';
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
 export const SEED = Number(params.get('seed') ?? 20260921);
 export const START_SIM = parseHms(params.get('t') ?? '07:40:00');
+
+/** `?dow=` 0..6 (0 = Monday) or mon..sun. Baseline day for forecasts and analytics;
+ *  the sim date itself (2026-09-21) is a Monday and does not change. */
+const DOWS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+function readDow(): number {
+  const v = (params.get('dow') ?? '').toLowerCase();
+  const n = DOWS.indexOf(v.slice(0, 3));
+  if (n >= 0) return n;
+  const k = Number(v);
+  return v !== '' && Number.isInteger(k) && k >= 0 && k <= 6 ? k : SIM_DOW;
+}
 
 export const world = buildWorld(SEED, START_SIM);
 export const engine = new SimEngine(world);
@@ -120,6 +133,13 @@ interface SettingsState {
   theme: Theme;
   showEvidence: boolean;
   llmEnabled: boolean;
+  /** PTCC L1 SOP: send the driver/operator notification without a click. The human
+   *  gate on an automatic action is this switch plus Revoke on every sent message. */
+  l1_auto_exec: boolean;
+  /** baseline day of week, 0 = Monday */
+  dow: number;
+  setL1AutoExec(on: boolean): void;
+  setDow(d: number): void;
   set<K extends keyof Thresholds>(k: K, v: Thresholds[K]): void;
   reset(): void;
   setLang(l: Lang): void;
@@ -142,6 +162,10 @@ export const useSettings = create<SettingsState>((set) => ({
   theme: readTheme(),
   showEvidence: params.get('evidence') === '1',
   llmEnabled: import.meta.env.VITE_LLM_ENABLED === 'true',
+  l1_auto_exec: params.get('l1auto') !== '0',
+  dow: readDow(),
+  setL1AutoExec: (l1_auto_exec) => set({ l1_auto_exec }),
+  setDow: (dow) => set({ dow: Math.max(0, Math.min(6, Math.round(dow))) }),
   set: (k, v) => {
     set((s) => ({ th: { ...s.th, [k]: v } }));
     reevaluate();
@@ -211,7 +235,7 @@ export const useEvents = create<EventState>((set, get) => ({
   audit: [],
   validate: (alert, input) => {
     const now = isoAt(world.sim_time_s);
-    const pb = playbookFor(input.event_type);
+    const pb = playbookFor(input.event_type, alert.level);
     const v = alert.vehicle_id ? world.vehicleById.get(alert.vehicle_id) : undefined;
     const ev: EmergencyEvent = {
       event_id: `EV-2026-0921-${String(++eventSeq).padStart(3, '0')}`,
@@ -414,6 +438,21 @@ interface CommsState {
   draftPassenger(m: Omit<PassengerMessage, 'message_id' | 'created_at' | 'status'>): PassengerMessage;
   approve(message_id: string, by: string): void;
   sendCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at'>): CoordinationMessage | undefined;
+  /** L1 SOP: the system sends. No role check - the gates are the Settings switch and revoke(). */
+  sendSystemCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'auto' | 'status'>): CoordinationMessage;
+  /** L3 SOP: the system prepares, a person sends. */
+  draftCoordination(m: Omit<CoordinationMessage, 'communication_id' | 'sent_at' | 'status'>): CoordinationMessage;
+  sendDraft(communication_id: string, by: string): boolean;
+  revoke(communication_id: string, by: string): boolean;
+}
+
+function audit(action: string, target: string, actor: string, detail?: string): void {
+  useEvents.setState((s) => ({
+    audit: [
+      { at: isoAt(world.sim_time_s), actor, role: useSettings.getState().role, action, target, detail },
+      ...s.audit,
+    ],
+  }));
 }
 
 let msgSeq = 0;
@@ -464,6 +503,54 @@ export const useComms = create<CommsState>((set) => ({
     set((s) => ({ coordination: [msg, ...s.coordination] }));
     return msg;
   },
+  sendSystemCoordination: (m) => {
+    const msg: CoordinationMessage = {
+      ...m,
+      communication_id: `CM-${String(++msgSeq).padStart(4, '0')}`,
+      sent_at: isoAt(world.sim_time_s),
+      status: 'sent',
+      auto: true,
+    };
+    set((s) => ({ coordination: [msg, ...s.coordination] }));
+    audit('auto_exec_l1', m.alert_id ?? msg.communication_id, 'system', msg.communication_id);
+    return msg;
+  },
+  draftCoordination: (m) => {
+    const msg: CoordinationMessage = {
+      ...m,
+      communication_id: `CM-${String(++msgSeq).padStart(4, '0')}`,
+      sent_at: isoAt(world.sim_time_s),
+      status: 'draft',
+    };
+    set((s) => ({ coordination: [msg, ...s.coordination] }));
+    audit('auto_draft_l3', m.alert_id ?? msg.communication_id, 'system', `${msg.communication_id} -> ${m.recipient}`);
+    return msg;
+  },
+  sendDraft: (id, by) => {
+    if (!can(useSettings.getState().role, 'send_coordination')) return false;
+    const msg = useComms.getState().coordination.find((c) => c.communication_id === id);
+    if (!msg || msg.status !== 'draft') return false;
+    set((s) => ({
+      coordination: s.coordination.map((c) =>
+        c.communication_id === id ? { ...c, status: 'sent', sent_at: isoAt(world.sim_time_s), operator: by } : c,
+      ),
+    }));
+    audit('send_draft', id, by, msg.recipient);
+    return true;
+  },
+  revoke: (id, by) => {
+    if (!can(useSettings.getState().role, 'revoke_auto_action')) return false;
+    const msg = useComms.getState().coordination.find((c) => c.communication_id === id);
+    if (!msg || !msg.auto || msg.status === 'revoked') return false;
+    const at = isoAt(world.sim_time_s);
+    set((s) => ({
+      coordination: s.coordination.map((c) =>
+        c.communication_id === id ? { ...c, status: 'revoked', revoked_at: at, revoked_by: by } : c,
+      ),
+    }));
+    audit('revoke_auto_comms', id, by, msg.alert_id);
+    return true;
+  },
 }));
 
 // ---------------------------------------------------------------- selection
@@ -493,29 +580,8 @@ export const useSelection = create<SelState>((set) => ({
 
 // ---------------------------------------------------------------- history rings
 
-export class Ring {
-  private buf: Float32Array;
-  private head = 0;
-  private len = 0;
-  constructor(readonly capacity: number) {
-    this.buf = new Float32Array(capacity);
-  }
-  push(v: number) {
-    this.buf[this.head] = v;
-    this.head = (this.head + 1) % this.capacity;
-    if (this.len < this.capacity) this.len++;
-  }
-  toArray(): number[] {
-    const out: number[] = new Array(this.len);
-    for (let i = 0; i < this.len; i++) {
-      out[i] = this.buf[(this.head - this.len + i + this.capacity) % this.capacity]!;
-    }
-    return out;
-  }
-  last(): number {
-    return this.len ? this.buf[(this.head - 1 + this.capacity) % this.capacity]! : 0;
-  }
-}
+export { Ring } from '../sim/ring';
+import { Ring } from '../sim/ring';
 
 export const history = {
   kpi: {
@@ -546,7 +612,8 @@ export function reevaluate(): void {
   if (!snap) return;
   const th = useSettings.getState().th;
   const metrics = deriveMetrics(snap, th);
-  const { alerts } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
+  const { alerts: evaluated } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
+  const alerts = runSop(evaluated, snap.sim_time_s);
   useSim.setState({ metrics });
   useAlerts.setState({ alerts });
 }
@@ -555,7 +622,8 @@ export function startBridge(): () => void {
   return engine.on((snap) => {
     const th = useSettings.getState().th;
     const metrics = deriveMetrics(snap, th);
-    const { alerts } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
+    const { alerts: evaluated } = evaluateRules(snap, metrics, th, useAlerts.getState().alerts, hy);
+    const alerts = runSop(evaluated, snap.sim_time_s);
 
     history.t.push(snap.sim_time_s);
     history.kpi.in_service.push(metrics.in_service);

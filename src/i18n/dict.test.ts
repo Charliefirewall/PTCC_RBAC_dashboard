@@ -10,6 +10,7 @@ import { overlayDict } from './dict.overlay';
 import { predictDict } from './dict.predict';
 import { roiDict } from './dict.roi';
 import { rolesDict } from './dict.roles';
+import { sopDict } from './dict.sop';
 import { dict } from './dict';
 import { t } from './t';
 import type { I18nKey } from './dict';
@@ -24,7 +25,7 @@ import type { I18nKey } from './dict';
 const AREAS: [string, Record<string, unknown>][] = [
   ['agentic', agenticDict], ['roles', rolesDict], ['map', mapDict], ['modules', modulesDict],
   ['overlay', overlayDict], ['dash', dashDict], ['copilot', copilotDict], ['kit', kitDict],
-  ['roi', roiDict], ['predict', predictDict], ['depot', depotDict],
+  ['roi', roiDict], ['predict', predictDict], ['depot', depotDict], ['sop', sopDict],
 ];
 
 describe('dictionary integrity', () => {
