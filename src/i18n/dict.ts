@@ -19,6 +19,10 @@ import { predictDict } from './dict.predict';
 import { depotDict } from './dict.depot';
 import { sopDict } from './dict.sop';
 import { insightDict } from './dict.insight';
+import { uxccDict } from './dict.uxcc';
+import { uxregDict } from './dict.uxreg';
+import { uxvehDict } from './dict.uxveh';
+import { uxrpDict } from './dict.uxrp';
 
 export interface Entry {
   en: string;
@@ -812,7 +816,7 @@ const d = {
  * dashboards, the map and the remaining modules cannot collide in one shared file.
  * Keys must be globally unique; a duplicate key is a compile error below.
  */
-const merged = { ...d, ...agenticDict, ...rolesDict, ...mapDict, ...modulesDict, ...overlayDict, ...dashDict, ...copilotDict, ...kitDict, ...roiDict, ...predictDict, ...depotDict, ...sopDict, ...insightDict };
+const merged = { ...d, ...agenticDict, ...rolesDict, ...mapDict, ...modulesDict, ...overlayDict, ...dashDict, ...copilotDict, ...kitDict, ...roiDict, ...predictDict, ...depotDict, ...sopDict, ...insightDict, ...uxccDict, ...uxregDict, ...uxvehDict, ...uxrpDict };
 
 export type I18nKey = keyof typeof merged;
 

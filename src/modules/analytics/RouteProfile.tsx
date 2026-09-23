@@ -7,17 +7,19 @@
  *   norm band / mean   baseline.profile()     - synthetic 8-week norm (SIMULATED)
  *   actual             world.tripLog          - the live trip's stop arrivals
  *   forecast tail      forecastStops()        - the same model as the scenario-2 forecast
- *   bars ("other data") segExcess × hop_km    - where along the trip the norm gains delay
+ *   bars ("other data") profile mean step      - where along the trip the norm gains delay
+ *   insight strip      routeInsight()         - the chart's numbers, summarised
  *
  * A live overlay exists only when a bus on this route and direction started its trip in
  * the chosen 15-min bucket AND the chosen day is the sim date's day; otherwise the
  * forecast for that start is the norm itself, and the screen says so.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { devHistory } from '../../store/forecast';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getInstanceByDom } from 'echarts/core';
 import { useSettings, useSim, world } from '../../store';
-import { baselineOf, bucketOf, bucketStartS, BUCKET_MIN, BUCKETS, SIM_DOW } from '../../sim/baseline';
+import { baselineOf, bucketOf, bucketStartS, BUCKETS, SIM_DOW } from '../../sim/baseline';
 import { hhmm } from '../../sim/engine';
 import { tripIdOf } from '../../sim/types';
 import { forecastStops } from '../../rules/forecast';
@@ -26,16 +28,20 @@ import { EChart, AXIS, CHART_BASE } from '../../charts/EChart';
 import { Button, DataTable, Panel, type Column } from '../../components/primitives';
 import { Select } from '../../components/kit';
 import { dayMatrix } from './dayMatrix';
+import { routeInsight } from './routeInsight';
 import { useLang, useT } from '../../i18n/t';
 import type { I18nKey } from '../../i18n/dict';
 
 const HERO_FIRST = ['R7', 'R12', 'R5'];
 const EM_DASH = '—';
+const MON = 0, FRI = 4, SUN = 6;
 
 function cssVar(n: string, f: string): string {
   return typeof document === 'undefined' ? f : getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
 }
 const min = (s: number) => +(s / 60).toFixed(2);
+const m1 = (s: number) => (Math.round(s / 6) / 10 || 0).toFixed(1); // || 0: no "-0.0"
+const sgn = (s: number) => `${s >= 0.05 * 60 ? '+' : ''}${m1(s)}`;
 
 interface Row {
   k: number;
@@ -45,6 +51,21 @@ interface Row {
   half: number;
   actual: number | null;
   seg: string;
+}
+
+function Tile({ label, value, tone, sub, text, children }: { label: string; value?: ReactNode; tone?: string; sub?: ReactNode; text?: boolean; children?: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5 rounded-md border border-[var(--color-line)] bg-[var(--color-bg2)] px-3 py-2">
+      <span className="t-label truncate">{label}</span>
+      {value !== undefined ? (
+        <span className={`${text ? 't-head py-[3px]' : 'num text-[1.15rem]'} truncate font-semibold leading-tight`} style={{ color: tone ?? 'var(--color-text1)' }} title={text ? String(value) : undefined}>
+          {value}
+        </span>
+      ) : null}
+      {sub ? <span className="t-meta truncate" title={typeof sub === 'string' ? sub : undefined}>{sub}</span> : null}
+      {children}
+    </div>
+  );
 }
 
 export default function RouteProfile({ initialRoute }: { initialRoute?: string | null }) {
@@ -91,7 +112,7 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
             .sort((a, b) => b.log.length - a.log.length)[0]
         : undefined;
     const actual = new Map((bus?.log ?? []).map((a) => [a.stop_idx, a.dev_s]));
-    const fc = bus ? forecastStops(world, bus.v, dow, tau) : null;
+    const fc = bus ? forecastStops(world, bus.v, dow, tau, devHistory.get(bus.v.route_id)) : null;
     const rows: Row[] = hops.map((h, i) => ({
       k: h.k,
       stop: lang === 'mn' ? h.stop.name_mn : h.stop.name_en,
@@ -101,109 +122,187 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
       actual: actual.get(h.k) ?? null,
       seg: h.seg_key ? segmentName(h.seg_key, lang) : EM_DASH,
     }));
-    const bars = hops.map((h) =>
-      h.seg_key ? Math.round(base.segExcess(h.seg_key, dow, bucket + Math.floor(h.offset_s / (BUCKET_MIN * 60))).mean * h.hop_km) : 0,
-    );
-    return { hops, norm, bus, fc, rows, bars };
+    return { hops, norm, bus, fc, rows };
     // tick: the live trip's log and forecast change every sim step
   }, [base, route, routeId, dir, dow, bucket, tau, lang, tick]);
 
+  // compare day's norm + the insight strip's numbers (the per-hop bars come from here too)
+  const cmpNorm = useMemo(() => (cmp === null ? null : base.profile(route, dir, cmp, bucket)), [base, route, dir, cmp, bucket]);
+  const ins = useMemo(() => routeInsight(view.hops, view.norm, cmpNorm), [view, cmpNorm]);
+  const dayName = t(`dow.${dow}` as I18nKey);
+  const cmpName = cmp === null ? '' : t(`dow.${cmp}` as I18nKey);
+
   const option = useMemo(() => {
-    const { norm, bus, fc, rows, bars } = view;
+    const { norm, bus, fc, rows } = view;
     const F = cssVar('--color-forecast', '#b48cf2');
+    const T1 = cssVar('--color-text1', '#e7edf5');
     const T3 = cssVar('--color-text3', '#8794a6');
-    const T2 = cssVar('--color-text2', '#9caabb');
-    const A = cssVar('--color-accent', '#4d8df0');
-    const tag = cmp === null ? '' : ` · ${t(`dow.${dow}` as I18nKey)}`;
-    const series: Record<string, unknown>[] = [
+    const P = cssVar('--color-accent', '#4d8df0');
+    const C = cssVar('--color-ev-high', '#e07b39');
+    const band = (name: string, stack: string, p: typeof norm, col: string, alpha: string, z: number, edge?: string) => [
+      // edge: the compare band is drawn as dotted p10/p90 outlines over a faint fill, so two
+      // overlapping bands stay two colours instead of blending to grey
       // band = invisible p10 line + stacked (p90 - p10) area; 'all' so negative p10 still stacks
-      { name: 'p10', type: 'line', stack: 'band', stackStrategy: 'all', symbol: 'none', lineStyle: { opacity: 0 }, data: norm.map((n) => min(n.p10)), tooltip: { show: false } },
+      { name: stack, type: 'line', stack, stackStrategy: 'all', symbol: 'none', lineStyle: edge ? { color: edge, width: 1, type: 'dotted' } : { opacity: 0 }, data: p.map((n) => min(n.p10)), silent: true, z },
       {
-        name: t('rp.band') + tag,
+        name,
         type: 'line',
-        stack: 'band',
+        stack,
         stackStrategy: 'all',
         symbol: 'none',
-        lineStyle: { opacity: 0 },
-        areaStyle: { color: T3 + '33' },
-        itemStyle: { color: T3 }, // legend swatch
-        data: norm.map((n) => min(n.p90 - n.p10)),
-        tooltip: { show: false },
-      },
-      { name: t('rp.normMean') + tag, type: 'line', symbol: 'none', lineStyle: { color: T2, width: 1.5 }, itemStyle: { color: T2 }, data: norm.map((n) => min(n.mean)) },
-      {
-        name: t('rp.segExcess'),
-        type: 'bar',
-        yAxisIndex: 1,
-        barWidth: '40%',
-        itemStyle: { color: T3 + '66' },
-        data: bars,
+        lineStyle: edge ? { color: edge, width: 1, type: 'dotted' } : { opacity: 0 },
+        areaStyle: { color: col + alpha },
+        itemStyle: { color: col + '88' }, // legend swatch
+        data: p.map((n) => min(n.p90 - n.p10)),
+        silent: true,
+        z,
       },
     ];
-    if (cmp !== null) {
-      // E12: the second day's norm, muted (dotted line, faint band) so the primary day leads
-      const cn = base.profile(route, dir, cmp, bucket);
-      const ctag = ` · ${t(`dow.${cmp}` as I18nKey)}`;
-      series.push(
-        { name: 'p10c', type: 'line', stack: 'cmp', stackStrategy: 'all', symbol: 'none', lineStyle: { opacity: 0 }, data: cn.map((n) => min(n.p10)), tooltip: { show: false } },
-        {
-          name: t('rp.band') + ctag,
-          type: 'line',
-          stack: 'cmp',
-          stackStrategy: 'all',
-          symbol: 'none',
-          lineStyle: { opacity: 0 },
-          areaStyle: { color: T3 + '14' },
-          itemStyle: { color: T3 + '66' },
-          data: cn.map((n) => min(n.p90 - n.p10)),
-          tooltip: { show: false },
-        },
-        { name: t('rp.normMean') + ctag, type: 'line', symbol: 'none', lineStyle: { color: T3, width: 1.5, type: 'dotted' }, itemStyle: { color: T3 }, data: cn.map((n) => min(n.mean)) },
-      );
+    const series: Record<string, unknown>[] = [
+      ...band(t('rp.s.band', { dow: dayName }), 'p10', norm, P, '40', 2),
+      {
+        name: t('rp.s.mean', { dow: dayName }),
+        type: 'line',
+        symbol: 'circle',
+        symbolSize: 4,
+        showSymbol: false,
+        z: 4,
+        lineStyle: { color: P, width: 2.5 },
+        itemStyle: { color: P },
+        data: norm.map((n) => min(n.mean)),
+        // "on schedule" reference
+        markLine: { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: T3, type: 'dashed', width: 1 }, data: [{ yAxis: 0 }] },
+      },
+    ];
+    if (cmpNorm) {
+      series.push(...band(t('rp.s.band', { dow: cmpName }), 'p10c', cmpNorm, C, '14', 1, C + 'cc'), {
+        name: t('rp.s.mean', { dow: cmpName }),
+        type: 'line',
+        symbol: 'none',
+        z: 3,
+        lineStyle: { color: C, width: 2, type: [6, 3] },
+        itemStyle: { color: C },
+        data: cmpNorm.map((n) => min(n.mean)),
+      });
     }
+    let fcData: (number | null)[] = norm.map((n) => min(n.mean));
+    let actData: (number | null)[] | null = null;
     if (bus && fc) {
       const k0 = fc.k0;
+      actData = rows.map((r) => (r.k <= k0 && r.actual !== null ? min(r.actual) : null));
       series.push({
         name: t('rp.actual'),
         type: 'line',
-        symbolSize: 4,
+        symbolSize: 5,
         connectNulls: true,
-        lineStyle: { color: A, width: 2 },
-        itemStyle: { color: A },
-        data: rows.map((r) => (r.k <= k0 && r.actual !== null ? min(r.actual) : null)),
+        z: 6,
+        lineStyle: { color: T1, width: 2 },
+        itemStyle: { color: T1 },
+        data: actData,
       });
       const ahead = new Map(fc.ahead.map((a) => [a.k, a.mean]));
-      series.push({
-        name: t('rp.forecast'),
-        type: 'line',
-        symbol: 'none',
-        lineStyle: { color: F, width: 2, type: 'dashed' },
-        itemStyle: { color: F },
-        // starts at the bus's current deviation so the tail joins the actual line
-        data: rows.map((r) => (r.k === k0 ? min(bus.v.schedule_deviation) : ahead.has(r.k) ? min(ahead.get(r.k)!) : null)),
-      });
-    } else {
-      series.push({
-        name: t('rp.forecastNorm'),
-        type: 'line',
-        symbol: 'none',
-        lineStyle: { color: F, width: 2, type: 'dashed' },
-        itemStyle: { color: F },
-        data: norm.map((n) => min(n.mean)),
-      });
+      // starts at the bus's current deviation so the tail joins the actual line
+      fcData = rows.map((r) => (r.k === k0 ? min(bus.v.schedule_deviation) : ahead.has(r.k) ? min(ahead.get(r.k)!) : null));
     }
+    series.push({
+      name: bus && fc ? t('rp.forecast') : t('rp.forecastNorm'),
+      type: 'line',
+      symbol: 'none',
+      // no live trip: the forecast IS the norm mean - a soft violet halo under the mean
+      // line instead of dashes that hide it
+      z: bus && fc ? 5 : 3,
+      lineStyle: bus && fc ? { color: F, width: 2, type: 'dashed' } : { color: F, width: 7, opacity: 0.35 },
+      itemStyle: { color: F },
+      data: fcData,
+    });
+    // delay each hop adds: own small grid under the chart, seconds, same stop axis
+    const bar = (name: string, d: number[], col: string, hot: number) => ({
+      name,
+      type: 'bar',
+      xAxisIndex: 1,
+      yAxisIndex: 1,
+      barMaxWidth: 12,
+      barGap: '15%',
+      itemStyle: { color: col + 'aa' }, // legend swatch
+      data: d.map((v, i) => ({ value: Math.round(v), itemStyle: { color: v < 0 ? T3 + '88' : i === hot ? col : col + 'aa' } })),
+    });
+    series.push(bar(t('rp.s.hop', { dow: dayName }), ins.hop, P, ins.fastestK));
+    if (ins.hopCmp) series.push(bar(t('rp.s.hop', { dow: cmpName }), ins.hopCmp, C, -1));
+
+    const dot = (c: string) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px"></span>`;
+    const line = (c: string, label: string, n: { mean: number; p10: number; p90: number }) =>
+      `${dot(c)}${label} <b>${sgn(n.mean)} min</b> <span style="opacity:.7">(${t('rp.tt.range', { lo: m1(n.p10), hi: m1(n.p90) })})</span>`;
+    const secs = (v: number) => `${v >= 0 ? '+' : ''}${Math.round(v)} s`;
+    const tooltip = {
+      ...CHART_BASE.tooltip,
+      trigger: 'axis',
+      axisPointer: { type: 'line', lineStyle: { color: T3 } },
+      formatter: (ps: { dataIndex: number }[]) => {
+        const i = ps[0]?.dataIndex ?? 0;
+        const r = rows[i]!;
+        const out = [`<b>${r.stop}</b> <span style="opacity:.7">· ${t('rp.tt.planned', { time: hhmm(r.planned_s) })}</span>`, line(P, dayName, norm[i]!)];
+        if (cmpNorm) {
+          out.push(line(C, cmpName, cmpNorm[i]!));
+          out.push(`&nbsp;&nbsp;&nbsp;Δ ${t('rp.tt.diff', { a: dayName, b: cmpName })}: <b>${sgn(norm[i]!.mean - cmpNorm[i]!.mean)} min</b>`);
+        }
+        if (actData?.[i] != null) out.push(`${dot(T1)}${t('rp.actual')} <b>${sgn(actData[i]! * 60)} min</b>`);
+        else if (bus && fcData[i] != null) out.push(`${dot(F)}${t('rp.forecast')} <b>${sgn(fcData[i]! * 60)} min</b>`);
+        if (i > 0) {
+          const hc = ins.hopCmp ? ` · ${cmpName} ${secs(ins.hopCmp[i]!)}` : '';
+          out.push(`<span style="opacity:.7">${t('rp.tt.hop')}: ${dayName} ${secs(ins.hop[i]!)}${hc}</span>`);
+        }
+        return out.join('<br/>');
+      },
+    };
+    const stops = rows.map((r) => r.stop);
     return {
       ...CHART_BASE,
-      grid: { ...CHART_BASE.grid, left: 44, right: 44, top: 30, bottom: 70 },
-      legend: { top: 0, itemWidth: 14, itemHeight: 6, textStyle: { fontSize: 10 }, data: series.map((s) => s.name as string).filter((n) => n !== 'p10' && n !== 'p10c') },
-      xAxis: { type: 'category', data: rows.map((r) => r.stop), ...AXIS, axisLabel: { ...AXIS.axisLabel, rotate: 40, fontSize: 9, hideOverlap: true } },
+      tooltip,
+      axisPointer: { link: [{ xAxisIndex: 'all' }] },
+      legend: {
+        type: 'scroll',
+        top: 0,
+        left: 'center',
+        itemWidth: 16,
+        itemHeight: 8,
+        itemGap: 14,
+        textStyle: { fontSize: 11 },
+        data: series.map((s) => s.name as string).filter((n) => n !== 'p10' && n !== 'p10c'),
+      },
+      grid: [
+        { left: 58, right: 18, top: 34, bottom: 232 },
+        { left: 58, right: 18, height: 72, bottom: 128 },
+      ],
+      xAxis: [
+        { type: 'category', gridIndex: 0, data: stops, ...AXIS, axisLabel: { show: false } },
+        {
+          type: 'category',
+          gridIndex: 1,
+          data: stops,
+          ...AXIS,
+          name: t('rp.axis.stop'),
+          nameLocation: 'middle',
+          nameGap: 112,
+          nameTextStyle: { fontSize: 11 },
+          axisLabel: { ...AXIS.axisLabel, rotate: 45, interval: 0, fontSize: 10, width: 110, overflow: 'truncate' },
+        },
+      ],
       yAxis: [
-        { type: 'value', name: 'min', ...AXIS },
-        { type: 'value', name: 's', ...AXIS, splitLine: { show: false } },
+        { type: 'value', gridIndex: 0, ...AXIS, name: t('rp.axis.dev'), nameLocation: 'middle', nameGap: 38, nameTextStyle: { fontSize: 11 } },
+        {
+          type: 'value',
+          gridIndex: 1,
+          ...AXIS,
+          splitNumber: 2,
+          name: t('rp.axis.hop'),
+          nameLocation: 'end',
+          nameGap: 8,
+          nameTextStyle: { fontSize: 10, align: "left" },
+        },
       ],
       series,
     };
-  }, [view, t, theme, cmp, base, route, dir, bucket, dow]);
+  }, [view, t, theme, cmpNorm, ins, dayName, cmpName]);
 
   // E13: whole day at a glance - rows = start buckets, cols = stops, value = norm mean (min)
   const heatOption = useMemo(() => {
@@ -238,7 +337,9 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
   }, [mode, base, route, dir, dow, view.rows, theme]);
 
   // EChart has no click prop; the instance lives on its own div, created in the child's
-  // mount effect, which runs before this one.
+  // mount effect, which runs before this one. heatOption in the deps: under StrictMode (dev)
+  // the fresh child chart is disposed and re-created after this effect ran once, so re-bind
+  // to the live instance on the next render (the sim tick re-renders every step).
   useEffect(() => {
     const el = heatRef.current?.firstElementChild as HTMLElement | null;
     const inst = el ? getInstanceByDom(el) : undefined;
@@ -253,7 +354,7 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
     return () => {
       inst.off('click', onClick);
     };
-  }, [mode]);
+  }, [mode, heatOption]);
 
   const columns: Column<Row>[] = [
     { key: 'stop', label: t('rp.col.stop') },
@@ -273,8 +374,22 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
   const note = view.bus
     ? t('rp.live', { vehicle: view.bus.v.vehicle_id, time: hhmm(view.bus.v.trip_start_s!) })
     : dow !== SIM_DOW
-      ? t('rp.otherDay', { dow: t(`dow.${dow}` as I18nKey) })
+      ? t('rp.otherDay', { dow: dayName })
       : t('rp.noLive', { route: routeId, time: startLabel });
+
+  // ---- insight strip
+  const lastStop = view.rows.at(-1)!.stop;
+  const tone = (s: number) => (s > 60 ? 'var(--color-sev-warn)' : s < -60 ? 'var(--color-accent)' : 'var(--color-sev-ok)');
+  const segLabel = ins.worstSeg ? segmentName(ins.worstSeg.key, lang) : '';
+  const tk = ins.end.mean > 60 && ins.worstSeg ? 'rp.take.late' : ins.end.mean < -60 ? 'rp.take.early' : 'rp.take.onTime';
+  const takeaway = t(tk, { dow: dayName, time: startLabel, stop: lastStop, m: m1(Math.abs(ins.end.mean)), seg: segLabel });
+  const cmpSentence =
+    ins.diff === null
+      ? ''
+      : t(Math.abs(ins.diff) < 3 ? 'rp.ins.same' : ins.diff > 0 ? 'rp.ins.worse' : 'rp.ins.better', { a: dayName, b: cmpName, d: m1(Math.abs(ins.diff)) });
+  // quick compare: the busiest weekday and the quietest day, never the day already shown
+  const quick = [FRI, SUN, MON].filter((d) => d !== dow).slice(0, 2);
+  const planMin = ins.plannedS / 60;
 
   return (
     <Panel titleKey="rp.title" sub={t('rp.sub')} bodyClassName="flex flex-col gap-2 p-2">
@@ -325,18 +440,66 @@ export default function RouteProfile({ initialRoute }: { initialRoute?: string |
         </div>
       </div>
       <p className="t-meta" data-route-profile-note>
-        {mode === 'heat' ? t('rp.heat.hint', { dow: t(`dow.${dow}` as I18nKey) }) : note}
+        {mode === 'heat' ? t('rp.heat.hint', { dow: dayName }) : note}
       </p>
       {mode === 'heat' && heatOption ? (
-        <div key="heat" style={{ height: 520 }} data-route-profile-heatmap ref={heatRef}>
+        <div key="heat" className="shrink-0" style={{ height: 520 }} data-route-profile-heatmap ref={heatRef}>
           <EChart option={heatOption} />
         </div>
       ) : (
-        <div key="trip" style={{ height: 340 }} data-route-profile-chart>
-          <EChart option={option} />
-        </div>
+        <>
+          <div className="grid shrink-0 grid-cols-2 gap-2 xl:grid-cols-4" data-route-profile-insights>
+            <Tile
+              label={t('rp.ins.end')}
+              value={`${sgn(ins.end.mean)} min`}
+              tone={tone(ins.end.mean)}
+              sub={t('rp.ins.endSub', { dow: dayName, time: startLabel, lo: m1(ins.end.p10), hi: m1(ins.end.p90) })}
+            />
+            {ins.diff !== null && ins.endCmp ? (
+              <Tile
+                label={t('rp.ins.cmp')}
+                value={cmpSentence}
+                text
+                tone={Math.abs(ins.diff) < 3 ? undefined : ins.diff > 0 ? 'var(--color-sev-warn)' : 'var(--color-sev-ok)'}
+                sub={t('rp.ins.cmpSub', { b: cmpName, m: sgn(ins.endCmp.mean) })}
+              />
+            ) : (
+              <Tile label={t('rp.ins.cmp')} sub={t('rp.ins.quick')}>
+                <div className="mt-0.5 flex gap-1">
+                  {quick.map((d) => (
+                    <Button key={d} size="sm" onClick={() => setCmp(d)}>
+                      {t(`dow.${d}` as I18nKey)}
+                    </Button>
+                  ))}
+                </div>
+              </Tile>
+            )}
+            <Tile
+              label={t('rp.ins.seg')}
+              value={ins.worstSeg ? segLabel : t('rp.ins.segNone')}
+              text
+              sub={
+                ins.worstSeg
+                  ? t('rp.ins.segSub', { m: m1(ins.worstSeg.s), stop: view.rows[ins.fastestK]!.stop, s: Math.round(ins.hop[ins.fastestK]!) })
+                  : undefined
+              }
+            />
+            <Tile
+              label={t('rp.ins.dur')}
+              value={t('rp.ins.durVal', { act: (planMin + ins.end.mean / 60).toFixed(0), plan: planMin.toFixed(0) })}
+              tone={tone(ins.end.mean)}
+              sub={t('rp.ins.durSub', { pct: `${ins.pct >= 0 ? '+' : ''}${(ins.pct * 100).toFixed(1)}` })}
+            />
+          </div>
+          <p className="t-body text-[var(--color-text2)]" data-route-profile-takeaway>
+            {takeaway} {cmpSentence ? `${cmpSentence}.` : ''}
+          </p>
+          <div key="trip" className="shrink-0" style={{ height: 500 }} data-route-profile-chart>
+            <EChart option={option} />
+          </div>
+        </>
       )}
-      <DataTable columns={columns} rows={view.rows} rowKey={(r) => String(r.k)} compact maxHeight={320} />
+      <DataTable columns={columns} rows={view.rows} rowKey={(r) => String(r.k)} compact maxHeight={240} />
     </Panel>
   );
 }

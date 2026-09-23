@@ -33,17 +33,21 @@ function HowItWorks({ a }: { a: ForecastAlert }) {
       <p className="text-[var(--color-text2)]">{t('fc.how.intro')}</p>
       <ol className="flex list-decimal flex-col gap-2 pl-5">
         <li>{t('fc.how.step1')}</li>
-        <li>{t('fc.how.step2', { tau: x?.tau_min ?? 30 })}</li>
-        <li>{t('fc.how.step3')}</li>
+        <li>{t('fc.how.step2')}</li>
+        <li>{t('fc.how.step3', { tau: x?.tau_min ?? 30 })}</li>
       </ol>
       {x ? (
         <div className="num rounded border border-[var(--color-forecast)] p-2 text-[11px]">
           <div className="panel-title mb-1">{t('fc.how.thisRow', { route: a.route_id ?? '', h: a.horizon_min })}</div>
           <div>{t('fc.how.norm', { v: min(x.norm_h_s) })}</div>
-          <div>{t('fc.how.drift', { v: min(x.drift_s), f: x.fade.toFixed(2) })}</div>
-          <div>{t('fc.how.seg', { v: min(x.seg_s), f: x.fade.toFixed(2) })}</div>
+          <div>{t('fc.how.drift', { v: min(x.drift_s) })}</div>
+          <div>
+            {x.slope_s_per_min === null
+              ? t('fc.how.trendNone')
+              : t('fc.how.trend', { r: min(x.slope_s_per_min * 10), v: min(x.target_s), f: (1 - x.fade).toFixed(2) })}
+          </div>
           <div className="mt-1 font-semibold text-[var(--color-forecast)]">
-            {t('fc.how.result', { v: min(x.norm_h_s + (x.drift_s + x.seg_s) * x.fade), p: pct(a.probability), c: a.confidence.toFixed(2) })}
+            {t('fc.how.result', { v: min(x.norm_h_s + x.drift_s * x.fade + x.target_s * (1 - x.fade)), p: pct(a.probability), c: a.confidence.toFixed(2) })}
           </div>
         </div>
       ) : (

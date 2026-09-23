@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildWorld } from '../data/build';
 import { SimEngine } from '../sim/engine';
 import { deriveMetrics } from './evaluate';
-import { chance, computeForecast, forecastRoute, forecastStops, HORIZONS, phi, phiInv, watchList } from './forecast';
+import { chance, computeForecast, forecastRoute, forecastStops, HORIZONS, phi, phiInv, trendOf, watchList } from './forecast';
 import { CONFIDENCE_CEILING } from './predict';
 import { DEMO_DEFAULTS } from './thresholds';
 
@@ -25,19 +25,48 @@ describe('forecast maths', () => {
   });
 });
 
+describe('trend', () => {
+  it('reads a steady rise as a rate, in seconds per minute', () => {
+    const h = [0, 60, 120, 180].map((t) => ({ t, v: 100 + t / 2 })); // +30 s per minute
+    expect(trendOf(h, 180)).toBeCloseTo(30, 6);
+  });
+
+  it('does not read a sudden jump as a trend: only what came after it counts', () => {
+    // flat at 0, jumps to 30 min, then flat: the route is holding late, not accelerating
+    const h = [0, 30, 60, 90, 120, 150, 180, 210, 240].map((t) => ({ t, v: t < 120 ? 0 : 1800 }));
+    expect(trendOf(h, 240)).toBeCloseTo(0, 6);
+    // straight after a jump there is too little history to say anything
+    expect(trendOf(h.slice(0, 6), 150)).toBeNull();
+  });
+});
+
 describe('forecast over the real world', () => {
   const w = buildWorld(20260921, 7 * 3600 + 40 * 60);
   const e = new SimEngine(w);
   for (let i = 0; i < 240; i++) e.tick();
 
-  it('explains itself: normal + fading difference-from-normal + slow roads (E6)', () => {
+  it('explains itself: normal + difference now + where the trend is heading (E6)', () => {
     const base = forecastRoute(w, 'R7', 0, 30, 0, 30);
-    const late = forecastRoute(w, 'R7', base.terms.norm_now_s + 600, 30, 0, 30);
+    const now = w.sim_time_s;
+    const d = base.terms.norm_now_s + 600;
+    // held 10 min late for the last 5 minutes: flat trend, the cause is still there
+    const flat = [0, 60, 120, 180, 240, 300].map((k) => ({ t: now - 300 + k, v: d }));
+    const late = forecastRoute(w, 'R7', d, 30, 0, 30, flat);
     expect(late.terms.drift_s).toBeCloseTo(600, 3);
+    expect(late.terms.slope_s_per_min).toBeCloseTo(0, 6);
     expect(late.terms.fade).toBeCloseTo(0.3679, 3); // e^(-30/30)
-    expect(late.terms.norm_h_s).toBeCloseTo(base.terms.norm_h_s, 6);
+    // flat and late: it stays late, it does not fade to normal
+    expect(late.mu_s - late.terms.norm_h_s).toBeCloseTo(600, 3);
     // the headline number is exactly the sum the panel prints
-    expect(late.mu_s).toBeCloseTo(late.terms.norm_h_s + (late.terms.drift_s + late.terms.seg_s) * late.terms.fade, 6);
+    const x = late.terms;
+    expect(late.mu_s).toBeCloseTo(x.norm_h_s + x.drift_s * x.fade + x.target_s * (1 - x.fade), 6);
+  });
+
+  it('a recovering route (falling) is forecast lower than one holding steady', () => {
+    const now = w.sim_time_s;
+    const falling = [0, 60, 120, 180, 240, 300].map((k) => ({ t: now - 300 + k, v: 900 - k }));
+    const flat = falling.map((p) => ({ ...p, v: 600 }));
+    expect(forecastRoute(w, 'R7', 600, 30, 0, 30, falling).mu_s).toBeLessThan(forecastRoute(w, 'R7', 600, 30, 0, 30, flat).mu_s - 120);
   });
 
   it('widens the spread and lowers confidence with horizon, never above the ceiling', () => {
@@ -98,6 +127,18 @@ describe('forecast over the real world', () => {
     const loose = computeForecast(w, m, { ...th, forecast_min_probability_pct: 10 }, 0)[30].length;
     const strict = computeForecast(w, m, { ...th, forecast_min_probability_pct: 80 }, 0)[30].length;
     expect(strict).toBeLessThan(loose);
+  });
+
+  it('a bus on a route that is holding late stays late at its remaining stops', () => {
+    const v = w.vehicles.find((x) => x.status === 'in_service' && x.route_id === 'R7')!;
+    const now = w.sim_time_s;
+    const flat = [0, 60, 120, 180, 240, 300].map((k) => ({ t: now - 300 + k, v: 900 }));
+    const saved = v.schedule_deviation;
+    v.schedule_deviation = 900;
+    const noTrend = forecastStops(w, v, 0, 30).ahead.at(-1)!;
+    const holding = forecastStops(w, v, 0, 30, flat).ahead.at(-1)!;
+    v.schedule_deviation = saved;
+    expect(holding.mean).toBeGreaterThan(noTrend.mean + 60);
   });
 
   it('forecasts every remaining stop of a bus trip, after the one it is at', () => {

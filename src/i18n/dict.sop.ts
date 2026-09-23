@@ -155,17 +155,24 @@ export const sopDict = {
     mn: 'Энэ чиглэлийн тухайн цаг, гарагийн хэвийн хоцролтоос эхэлнэ.',
   },
   'fc.how.step2': {
-    en: 'Add how far the route is from normal right now; that difference fades out over about {tau} minutes.',
-    mn: 'Одоо хэвийнээс хэр зөрж байгааг нэмнэ; энэ зөрүү ойролцоогоор {tau} минутад бүдгэрнэ.',
+    en: 'Add how far the route is from normal right now.',
+    mn: 'Одоо хэвийнээс хэр зөрж байгааг нэмнэ.',
   },
   'fc.how.step3': {
-    en: 'Add extra delay where a road segment on the route is currently much slower than normal.',
-    mn: 'Чиглэлийн замын хэсэг одоо хэвийнээс их удаан байвал нэмэлт хоцролтыг нэмнэ.',
+    en: 'Read the last 10 minutes: if the delay is still growing or holding, its cause is still there and it carries forward; if it is falling, it recovers. The gap moves towards where it is heading over about {tau} minutes.',
+    mn: 'Сүүлийн 10 минутыг уншина: хоцролт өссөөр эсвэл хэвээр байвал шалтгаан нь хэвээр тул үргэлжилнэ; буурч байвал сэргэнэ. Зөрүү ойролцоогоор {tau} минутад чиглэж буй түвшин рүүгээ шилжинэ.',
   },
   'fc.how.thisRow': { en: 'This row: {route}, +{h} min', mn: 'Энэ мөр: {route}, +{h} мин' },
   'fc.how.norm': { en: '1. Normal at that time: {v} min', mn: '1. Тухайн цагийн хэвийн: {v} мин' },
-  'fc.how.drift': { en: '2. Difference from normal now: {v} min × fade {f}', mn: '2. Одоогийн хэвийнээс зөрүү: {v} мин × бүдгэрэлт {f}' },
-  'fc.how.seg': { en: '3. Slow road segments: {v} min × fade {f}', mn: '3. Удаан замын хэсгүүд: {v} мин × бүдгэрэлт {f}' },
+  'fc.how.drift': { en: '2. Difference from normal now: {v} min', mn: '2. Одоогийн хэвийнээс зөрүү: {v} мин' },
+  'fc.how.trend': {
+    en: '3. Trend {r} min per 10 min → heading for {v} min above normal; {f} of the way there by then',
+    mn: '3. Чиг хандлага 10 минутад {r} мин → хэвийнээс {v} мин дээш чиглэж байна; тэр үед {f} хувь нь хүрнэ',
+  },
+  'fc.how.trendNone': {
+    en: '3. No trend yet (under 2 minutes of history): assume it fades back to normal',
+    mn: '3. Чиг хандлага хараахан алга (2 минутаас бага түүх): хэвийн рүү буцна гэж үзнэ',
+  },
   'fc.how.result': { en: '= expected {v} min → chance {p} · confidence {c}', mn: '= хүлээгдэж буй {v} мин → магадлал {p} · итгэл {c}' },
   'fc.how.network': {
     en: 'The network row counts how many routes are forecast to be late together.',

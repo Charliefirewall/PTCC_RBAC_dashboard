@@ -29,7 +29,7 @@ import type { I18nKey } from '../../i18n/dict';
 import { useT } from '../../i18n/t';
 import type { RouteMetrics } from '../../rules/evaluate';
 import { rankBy } from '../../rules/regularity';
-import { hhmm } from '../../sim/engine';
+import { hhmmss } from '../../sim/engine';
 import { TIMETABLE_PROVENANCE } from '../../sim/timetable';
 import { history, useSelection, useSettings, useSim } from '../../store';
 
@@ -140,7 +140,7 @@ export default function Regularity() {
     // Two samples is the minimum a line can be drawn from; below that the panel says
     // so rather than drawing a chart with one dot in it.
     if (n < 2) return null;
-    const x = ts.slice(ts.length - n).map(hhmm);
+    const x = ts.slice(ts.length - n).map(hhmmss);
     // A ring is a Float32Array: a sample that was never written, or was written from a
     // division by zero, is non-finite. ECharts draws `null` as a break in the line,
     // which is the honest rendering of "no sample", where NaN paints nothing at all.
@@ -158,12 +158,15 @@ export default function Regularity() {
     // nonsense axis maximum.
     const real = actual.filter((v): v is number => v !== null);
     const peakMin = real.length ? Math.max(...real) : 0;
-    const yMax = Math.max(30, Math.ceil((peakMin + 5) / 5) * 5);
+    const yMax = Math.max(30, Math.ceil((Math.max(peakMin, Number.isFinite(gapMin) ? gapMin : 0) + 5) / 5) * 5);
 
     // markArea over every contiguous span above the service-gap threshold. S8 shades
     // one such span and labels it "Service gap (28 min)"; here the rule threshold
     // decides where the shading goes, so it follows the data, not a fixed window.
-    const areas: { xAxis: string; label?: Record<string, unknown> }[][] = [];
+    // Positions are sample INDICES, not HH:MM labels: labels repeat (several samples per
+    // minute) and ECharts resolves a repeated label to its first occurrence, so a span
+    // inside one minute collapsed to zero width and its label floated over nothing.
+    const areas: { xAxis: number; label?: Record<string, unknown> }[][] = [];
     let start = -1;
     for (let i = 0; i <= actual.length; i++) {
       const v = (i < actual.length ? actual[i] : null) ?? null;
@@ -174,7 +177,7 @@ export default function Regularity() {
         const peak = span.length ? Math.max(...span) : 0;
         areas.push([
           {
-            xAxis: x[start]!,
+            xAxis: start,
             label: {
               formatter: t('reg.serviceGap', { min: Math.round(peak) }),
               position: 'insideTop',
@@ -182,7 +185,7 @@ export default function Regularity() {
               fontSize: 10,
             },
           },
-          { xAxis: x[i - 1]! },
+          { xAxis: i - 1 },
         ]);
         start = -1;
       }
@@ -192,23 +195,46 @@ export default function Regularity() {
     const muted = cssVar('--color-text3', '#667588');
     // Canvas cannot resolve `color-mix`, so the 16 % fill is a hex-alpha suffix (0x29).
     const gapFill = cssVar('--color-sev-crit', '#e5484d') + '29';
+    const warn = cssVar('--color-sev-warn', '#e0a02e');
+    const text2 = cssVar('--color-text2', '#9caabb');
+    const fmt1 = (v: number | null | undefined) => (v === null || v === undefined ? EM_DASH : v.toFixed(1));
 
     return {
       ...CHART_BASE,
-      grid: { ...CHART_BASE.grid, top: 28 },
+      // bottom room for the 45° tick labels plus the axis name under them
+      grid: { ...CHART_BASE.grid, top: 30, left: 52, right: 16, bottom: 64 },
       // No textStyle here: EChart's themer overwrites legend.textStyle wholesale.
       legend: { show: true, top: 0, right: 0, itemHeight: 8 },
+      tooltip: {
+        ...CHART_BASE.tooltip,
+        formatter: (ps: { dataIndex: number }[]) => {
+          const i = ps[0]?.dataIndex ?? 0;
+          const a = actual[i];
+          const d = a !== null && a !== undefined && plannedMin !== null ? a - plannedMin : null;
+          return [
+            `<b>${x[i]}</b>`,
+            `${t('reg.actual')}: ${fmt1(a)} min`,
+            `${t('reg.planned')}: ${fmt1(plannedMin)} min`,
+            `${t('uxreg.hw.diff')}: ${d === null ? EM_DASH : (d > 0 ? '+' : '') + d.toFixed(1)} min`,
+          ].join('<br/>');
+        },
+      },
       xAxis: {
         ...AXIS,
         type: 'category',
         data: x,
         boundaryGap: false,
         splitLine: { show: false },
-        // Samples are seconds apart but labels are HH:MM, so the default axis
-        // printed the same minute seven times in a row. Label first sample of each minute.
+        name: t('uxreg.axis.time'),
+        nameLocation: 'middle',
+        nameGap: 46,
+        nameTextStyle: { color: muted, fontSize: 10 },
+        // Samples are seconds apart, so labels are HH:MM:SS (an HH:MM label repeated the
+        // same minute several times) and thinned to ~12 so the 45° labels never collide.
         axisLabel: {
           ...(AXIS as { axisLabel?: Record<string, unknown> }).axisLabel,
-          interval: (i: number) => i === 0 || x[i] !== x[i - 1],
+          rotate: 45,
+          interval: Math.max(0, Math.ceil(x.length / 12) - 1),
         },
       },
       yAxis: {
@@ -220,8 +246,10 @@ export default function Regularity() {
         // reads against the deck's scale, but grow to fit an actual gap.
         max: yMax,
         name: t('reg.headwayMin'),
+        nameLocation: 'middle',
+        nameRotate: 90,
         nameTextStyle: { color: muted, fontSize: 10 },
-        nameGap: 12,
+        nameGap: 32,
       },
       series: [
         {
@@ -232,6 +260,32 @@ export default function Regularity() {
           sampling: 'lttb',
           lineStyle: { type: 'dashed', width: 1.5, color: muted },
           itemStyle: { color: muted },
+          // Labels for the two horizontal reference lines, drawn at their right end.
+          markLine: {
+            silent: true,
+            symbol: 'none',
+            label: { position: 'insideEndTop', fontSize: 10 },
+            data: [
+              ...(plannedMin !== null
+                ? [
+                    {
+                      yAxis: plannedMin,
+                      lineStyle: { type: 'dashed', width: 1.5, color: muted },
+                      label: { formatter: t('uxreg.hw.plannedMark', { min: +plannedMin.toFixed(1) }), color: text2 },
+                    },
+                  ]
+                : []),
+              ...(Number.isFinite(gapMin)
+                ? [
+                    {
+                      yAxis: gapMin,
+                      lineStyle: { type: 'dotted', width: 1, color: warn },
+                      label: { formatter: t('uxreg.hw.gapMark', { min: Math.round(gapMin) }), color: warn },
+                    },
+                  ]
+                : []),
+            ],
+          },
         },
         {
           name: t('reg.actual'),
@@ -324,6 +378,15 @@ export default function Regularity() {
           <Panel
             title={t('reg.headwayTitle', { route: rm?.route_id ?? '—' })}
             className="min-h-[240px] flex-[3]"
+            sub={
+              rm
+                ? t('uxreg.hw.sub', {
+                    route: rm.route_id,
+                    planned: intOr(rm.planned_headway_s / 60),
+                    gap: intOr(th.service_gap_max_s / 60),
+                  })
+                : undefined
+            }
             right={
               rm ? (
                 <span className="num t-meta min-w-0 truncate">

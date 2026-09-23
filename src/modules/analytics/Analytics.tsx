@@ -10,7 +10,9 @@
  */
 
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { history, useAlerts, useComms, useEvents, useSelection, useSettings } from '../../store';
+import { history, useAlerts, useComms, useEvents, useSelection, useSettings, useSim } from '../../store';
+import { hhmmss } from '../../sim/engine';
+import { eventWindow, impactInsights, isoToSimS } from './headwayImpact';
 import { useHashQuery } from '../../app/App';
 import { EChart, AXIS, CHART_BASE } from '../../charts/EChart';
 import { Button, Empty, EventSeverityBadge, EvidenceTag, Panel, StatusPill, fmtInt } from '../../components/primitives';
@@ -280,58 +282,182 @@ function HeadwayImpact({ event, gapThresholdS }: { event: EmergencyEvent; gapThr
   const t = useT();
   // subscribe to the theme so the canvas colours below are re-read on a theme switch
   const theme = useSettings((s) => s.theme);
+  // re-render on every sim tick: the rings below are mutable and keep their identity
+  useSim((s) => s.tick);
   const route = event.route_number;
   const ring = route ? history.headway.get(route) : undefined;
-  // A ring is a Float32Array; a slot never written reads back as a non-finite number.
-  // NOT memoised on `ring`: a Ring is mutable and keeps its identity for the life of
-  // the page, so memoising on it would freeze this chart at the first tick it saw.
-  const series = (ring?.toArray() ?? []).filter((v) => Number.isFinite(v));
-  // Floor of a short series is 0, which would make the "during" band a zero-width area
-  // pinned to the first sample. The render guard below keeps this above 0.
-  const third = Math.max(1, Math.floor(series.length / 3));
-  const option = useMemo(
-    () => ({
-      ...CHART_BASE,
-      grid: { ...CHART_BASE.grid, left: 40 },
-      xAxis: { type: 'category', data: series.map((_, i) => String(i)), ...AXIS },
-      yAxis: { type: 'value', name: 'min', ...AXIS },
-      series: [
-        {
-          type: 'line',
-          showSymbol: false,
-          data: series.map((v) => +(v / 60).toFixed(1)),
-          lineStyle: { color: cssVar('--color-accent', '#4d8df0') },
-          // §13.8: the service-gap threshold this headway is judged against, drawn.
-          markLine: {
-            silent: true,
-            symbol: 'none' as const,
-            lineStyle: { color: cssVar('--color-sev-warn', '#e0a02e'), type: 'dashed' as const, width: 1 },
-            label: {
-              formatter: Number.isFinite(gapThresholdS) ? `${(gapThresholdS / 60).toFixed(0)} min` : EM_DASH,
-              color: cssVar('--color-text3', '#7d8b9d'),
-              fontSize: 9,
-              position: 'insideEndTop' as const,
-            },
-            data: Number.isFinite(gapThresholdS) ? [{ yAxis: +(gapThresholdS / 60).toFixed(1) }] : [],
+  // Align the headway ring with the time ring on the TAIL (a route that started
+  // reporting late has a shorter ring). A never-written Float32 slot is non-finite and
+  // becomes null - a break in the line - rather than being dropped, which would shift
+  // every later sample against its timestamp.
+  const hw = ring?.toArray() ?? [];
+  const tAll = history.t.toArray();
+  const n = Math.min(hw.length, tAll.length);
+  const ts = tAll.slice(tAll.length - n);
+  const vals = hw.slice(hw.length - n).map((v) => (Number.isFinite(v) ? +(v / 60).toFixed(1) : null));
+  const real = vals.filter((v) => v !== null).length;
+  const thrMin = Number.isFinite(gapThresholdS) ? gapThresholdS / 60 : Infinity;
+  const win = eventWindow(ts, isoToSimS(event.timestamp), isoToSimS(event.closed_at));
+  const ins = impactInsights(vals, ts, win, thrMin);
+
+  const x = ts.map(hhmmss);
+  const text2 = cssVar('--color-text2', '#9caabb');
+  const text3 = cssVar('--color-text3', '#7d8b9d');
+  const warn = cssVar('--color-sev-warn', '#e0a02e');
+  const phaseLabel = (key: I18nKey) => ({
+    formatter: t(key),
+    position: 'insideTop' as const,
+    color: text2,
+    fontSize: 10,
+  });
+  const option = {
+    ...CHART_BASE,
+    // bottom room for the 45° tick labels plus the axis name under them
+    grid: { ...CHART_BASE.grid, left: 50, right: 16, top: 22, bottom: 62 },
+    tooltip: {
+      ...CHART_BASE.tooltip,
+      formatter: (ps: { dataIndex: number }[]) => {
+        const i = ps[0]?.dataIndex ?? 0;
+        const phase = i < win.start ? 'uxreg.imp.before' : i < win.end ? 'uxreg.imp.during' : 'uxreg.imp.after';
+        const v = vals[i];
+        return `<b>${hhmmss(ts[i]!)}</b> · ${t(phase)}<br/>${t('uxreg.imp.series')}: ${v ?? EM_DASH} min`;
+      },
+    },
+    xAxis: {
+      ...AXIS,
+      type: 'category',
+      data: x,
+      boundaryGap: false,
+      name: t('uxreg.axis.time'),
+      nameLocation: 'middle',
+      nameGap: 44,
+      nameTextStyle: { color: text3, fontSize: 10 },
+      axisLabel: { ...AXIS.axisLabel, rotate: 45, interval: Math.max(0, Math.ceil(x.length / 12) - 1) },
+    },
+    yAxis: {
+      ...AXIS,
+      type: 'value',
+      min: 0,
+      name: t('uxreg.imp.yAxis'),
+      nameLocation: 'middle',
+      nameRotate: 90,
+      nameGap: 32,
+      nameTextStyle: { color: text3, fontSize: 10 },
+    },
+    series: [
+      {
+        name: t('uxreg.imp.series'),
+        type: 'line',
+        showSymbol: false,
+        data: vals,
+        lineStyle: { color: cssVar('--color-accent', '#4d8df0') },
+        itemStyle: { color: cssVar('--color-accent', '#4d8df0') },
+        // §13.8: the service-gap threshold this headway is judged against, drawn.
+        markLine: {
+          silent: true,
+          symbol: 'none' as const,
+          lineStyle: { color: warn, type: 'dashed' as const, width: 1 },
+          label: {
+            formatter: t('uxreg.imp.threshold', { min: Math.round(thrMin) }),
+            color: warn,
+            fontSize: 10,
+            position: 'insideEndTop' as const,
           },
-          markArea: {
-            // canvas cannot resolve color-mix(), so the alpha rides along as a hex suffix (0x1f ~ 12 %)
-            itemStyle: { color: cssVar('--color-ev-high', '#e07b39') + '1f' },
-            data: [[{ xAxis: String(third) }, { xAxis: String(third * 2) }]],
-          },
+          data: Number.isFinite(thrMin) ? [{ yAxis: +thrMin.toFixed(1) }] : [],
         },
-      ],
-    }),
-    [series, third, theme, gapThresholdS],
-  );
+        // Sample indices, not HH:MM labels: labels repeat within a minute and ECharts
+        // resolves a repeated label to its first occurrence.
+        markArea: {
+          silent: true,
+          data: [
+            ...(win.start > 0
+              ? [[{ xAxis: 0, label: phaseLabel('uxreg.imp.before'), itemStyle: { color: 'transparent' } }, { xAxis: win.start }]]
+              : []),
+            [
+              {
+                xAxis: win.start,
+                label: phaseLabel('uxreg.imp.during'),
+                // canvas cannot resolve color-mix(), so the alpha rides along as a hex suffix (0x1f ~ 12 %)
+                itemStyle: { color: cssVar('--color-ev-high', '#e07b39') + '1f' },
+              },
+              { xAxis: win.end - 1 },
+            ],
+            ...(win.end < n
+              ? [[{ xAxis: win.end - 1, label: phaseLabel('uxreg.imp.after'), itemStyle: { color: 'transparent' } }, { xAxis: n - 1 }]]
+              : []),
+          ],
+        },
+      },
+    ],
+  } as Record<string, unknown>;
+  void theme; // colours above are re-read on every render, so a theme switch is picked up
+
   /*
    * Two different absences, and they were the same sentence before: an event with no
    * route will NEVER have this chart, while an event on a route whose ring has not
    * filled yet will have it in a few ticks.
    */
   if (!route) return <Empty title={t('an.impactNoRouteTitle')} text={t('an.impactNoRouteText')} />;
-  if (series.length < 3) return <Empty title={t('an.impactWarmTitle')} text={t('an.impactWarmText', { route })} />;
-  return <EChart option={option} />;
+  if (real < 3) return <Empty title={t('an.impactWarmTitle')} text={t('an.impactWarmText', { route })} />;
+
+  const f1 = (v: number | null) => (v === null ? EM_DASH : v.toFixed(1));
+  const thr = Math.round(thrMin);
+  const head =
+    ins.ratio !== null
+      ? t(ins.ratio >= 1 ? 'uxreg.imp.sumRose' : 'uxreg.imp.sumFell', {
+          x: ins.ratio.toFixed(1),
+          before: f1(ins.before),
+          during: f1(ins.during),
+        })
+      : t('uxreg.imp.sumPeak', { peak: f1(ins.peak?.min ?? null), at: ins.peak ? hhmmss(ins.peak.t) : EM_DASH });
+  const tail =
+    ins.recovered === null
+      ? t('uxreg.imp.sumOpen')
+      : ins.recovered
+        ? t('uxreg.imp.sumBack', { thr, min: Math.round(ins.recoveryMin ?? 0) })
+        : t('uxreg.imp.sumNot', { thr });
+  const pct = ins.ratio === null ? null : Math.round((ins.ratio - 1) * 100);
+  const cards: { key: string; label: string; value: string; note?: string; tone?: string }[] = [
+    { key: 'before', label: t('uxreg.imp.mean', { phase: t('uxreg.imp.before') }), value: `${f1(ins.before)} min`, note: ins.before === null ? t('uxreg.imp.noBase') : undefined },
+    { key: 'during', label: t('uxreg.imp.mean', { phase: t('uxreg.imp.during') }), value: `${f1(ins.during)} min` },
+    { key: 'after', label: t('uxreg.imp.mean', { phase: t('uxreg.imp.after') }), value: `${f1(ins.after)} min`, note: ins.after === null ? t('uxreg.imp.recOpen') : undefined },
+    { key: 'peak', label: t('uxreg.imp.peak'), value: `${f1(ins.peak?.min ?? null)} min`, note: ins.peak ? t('uxreg.imp.peakAt', { at: hhmmss(ins.peak.t) }) : undefined, tone: ins.peak && ins.peak.min > thrMin ? 'var(--color-sev-crit)' : undefined },
+    { key: 'change', label: t('uxreg.imp.change'), value: pct === null ? EM_DASH : `${pct > 0 ? '+' : ''}${pct}%`, note: ins.ratio === null ? t('uxreg.imp.noBase') : `${ins.ratio.toFixed(1)}×`, tone: pct !== null && pct > 0 ? 'var(--color-sev-warn)' : undefined },
+    {
+      key: 'recovery',
+      label: t('uxreg.imp.recovery'),
+      value: ins.recovered === null ? t('uxreg.imp.recOpen') : ins.recovered ? t('uxreg.imp.recAfter', { min: Math.round(ins.recoveryMin ?? 0) }) : t('uxreg.imp.recNotYet'),
+      note: `< ${thr} min`,
+      tone: ins.recovered ? 'var(--color-sev-ok)' : ins.recovered === false ? 'var(--color-sev-crit)' : undefined,
+    },
+  ];
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2" data-impact-route={route}>
+      {/* absolute fill: a %-height inside a flexed item does not resolve reliably, and
+          the canvas then stopped short of the space the panel gives it */}
+      <div className="relative min-h-[260px] flex-1">
+        <EChart option={option} className="absolute inset-0" />
+      </div>
+      <p
+        className="t-body shrink-0 border-l-2 border-[var(--color-accent)] pl-2 text-[var(--color-text1)]"
+        data-impact-summary
+      >
+        {head}; {tail}.
+      </p>
+      <dl className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3" data-impact-insights>
+        {cards.map((c) => (
+          <div key={c.key} data-impact-card={c.key} className="min-w-0 rounded border border-[var(--color-line)] px-2 py-1">
+            <dt className="t-meta truncate uppercase tracking-wider">{c.label}</dt>
+            <dd className="num t-body font-medium" style={c.tone ? { color: c.tone } : undefined}>
+              {c.value}
+              {c.note ? <span className="t-meta ml-1.5 font-normal">{c.note}</span> : null}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {win.approx ? <p className="t-meta shrink-0">{t('uxreg.imp.approx')}</p> : null}
+    </div>
+  );
 }
 
 function DailyReport({ events, closed }: { events: readonly EmergencyEvent[]; closed: readonly EmergencyEvent[] }) {

@@ -2,7 +2,8 @@
  * Command Centre — Slide 7 of the client deck, live (plan sections 6.1, 7.2, 17.4).
  *
  * Two layouts, one component tree:
- *   operator — KPI row, map ~55 % left, priority alerts right, four widgets below;
+ *   operator — hero, KPI row, then funnel+agent feed | map | next hour + priority
+ *              alerts, four summary cards below;
  *   wall     — the fixed 3-band canvas of plan 6.1/17.3 (30 / 45 / 25 %), no hover,
  *              no scroll, no modals, everything scaled by `--wall-scale`.
  *
@@ -208,7 +209,9 @@ function Funnel({ metrics, wall }: { metrics: DerivedMetrics; wall: boolean }) {
         </span>
       </div>
 
-      <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))' }}>
+      {/* 76 px in operator mode: the funnel now sits in the narrow left column of the
+          working band (~280 px at 1366), where 88 px dropped "Critical" to a second row. */}
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${wall ? 88 : 76}px, 1fr))` }}>
         {cells.map((c) => (
           <div
             key={c.key}
@@ -280,6 +283,13 @@ function openAlert(a: Alert): void {
 /**
  * E10 - PTCC scenario 2 "can use the same dashboard": the next hour at a glance, in the
  * forecast colour. Reads useForecast only; a click opens the Forecast tab.
+ *
+ * A slim strip of four equal chips (+15m / +30m / +45m / +1h), each carrying the count of
+ * routes forecast late and the top SOP level as a DASHED badge - the same forecast
+ * convention the Alerts forecast tab uses, so a prediction never reads as a live alert.
+ * It used to be a sentence per horizon, which wrapped mid-phrase in a 450 px column and
+ * stole two rows from the Priority alerts below it. The full sentence is still on each
+ * chip as its tooltip.
  */
 function NextHour() {
   const t = useT();
@@ -288,17 +298,34 @@ function NextHour() {
     <a
       href="#/alerts"
       data-next-hour=""
-      className="panel block shrink-0 border-l-4 border-l-[var(--color-forecast)] px-3 py-2 hover:bg-[var(--color-bg2)]"
+      className="panel flex shrink-0 flex-col gap-1 border-l-4 border-l-[var(--color-forecast)] px-3 py-1 hover:bg-[var(--color-bg2)]"
     >
-      <div className="panel-title mb-1 text-[var(--color-forecast)]">{t('cc.nextHour')}</div>
-      <div className="num flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+      <div className="flex min-w-0 items-baseline justify-between gap-2">
+        <span className="panel-title shrink-0 text-[var(--color-forecast)]">{t('cc.nextHour')}</span>
+        <span className="t-meta truncate">{t('uxcc.nextHourLegend')}</span>
+      </div>
+      <div className="grid grid-cols-4 gap-1.5">
         {HORIZONS.map((h) => {
           const rows = byH[h].filter((a) => a.route_id);
           const top = rows.reduce((m, a) => Math.max(m, a.level), 0);
           return (
-            <span key={h}>
-              <span className="text-[var(--color-text3)]">+{h === 60 ? '1h' : `${h}m`}: </span>
-              {rows.length ? t('cc.nextHourRow', { n: rows.length, level: top }) : t('cc.nextHourNone')}
+            <span
+              key={h}
+              title={rows.length ? t('cc.nextHourRow', { n: rows.length, level: top }) : t('cc.nextHourNone')}
+              className="flex min-w-0 items-center justify-between gap-1 rounded bg-[var(--color-bg2)] px-2 py-0.5"
+            >
+              <span className="num text-[10px] text-[var(--color-forecast)]">+{h === 60 ? '1h' : `${h}m`}</span>
+              <span
+                className="num text-[13px] font-semibold"
+                style={{ color: rows.length ? 'var(--color-text1)' : 'var(--color-text3)' }}
+              >
+                {rows.length}
+              </span>
+              {top >= 1 && top <= 3 ? (
+                <LevelBadge level={top as 1 | 2 | 3} forecast />
+              ) : (
+                <span className="num inline-flex h-5 items-center text-[10px] text-[var(--color-text3)]">{DASH}</span>
+              )}
             </span>
           );
         })}
@@ -348,7 +375,9 @@ function PriorityAlerts({ alerts, wall, className = '' }: { alerts: Alert[]; wal
                 type="button"
                 onClick={() => openAlert(a)}
                 disabled={wall}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-left enabled:hover:bg-[var(--color-bg2)]"
+                // py-1 in operator mode: the list owns the right column and every 4 px per
+                // row is another alert above the fold at 950 px.
+                className={`flex w-full items-center gap-2 px-2 text-left enabled:hover:bg-[var(--color-bg2)] ${wall ? 'py-1.5' : 'py-1'}`}
               >
                 {a.level ? <LevelBadge level={a.level} /> : null}
                 <SeverityChip severity={a.severity} size={wall ? 'wall' : 'sm'} />
@@ -362,7 +391,7 @@ function PriorityAlerts({ alerts, wall, className = '' }: { alerts: Alert[]; wal
                       body already scrolls. The WALL is a fixed no-scroll canvas whose band
                       heights are budgeted, so there it still truncates. */}
                   <span
-                    className={`num block text-[var(--color-text3)] ${wall ? 'truncate' : ''}`}
+                    className={`num block text-[var(--color-text3)] ${wall ? 'truncate' : 'leading-tight'}`}
                     style={{ fontSize: wall ? '0.68em' : 10 }}
                   >
                     {a.vehicle_id ?? a.route_id ?? a.operator_id ?? DASH} · {ruleLine(a, t)}
@@ -664,51 +693,61 @@ function Hero({ metrics, alerts, sim_time_s, running }: { metrics: DerivedMetric
   const greeting = t(hour < 12 ? 'dash.greetMorning' : hour < 18 ? 'dash.greetAfternoon' : 'dash.greetEvening');
 
   return (
-    <section className="panel flex shrink-0 flex-col gap-1.5 px-4 py-3">
-      <div className="t-meta flex items-center gap-2">
-        <span
-          className="inline-block shrink-0 rounded-full"
-          style={{ width: 6, height: 6, background: running ? 'var(--color-agent)' : 'var(--color-text3)' }}
-          aria-hidden
-        />
-        <span className="num truncate">
-          {t('dash.heroKicker', {
-            status: t(running ? 'dash.cycleLive' : 'dash.cyclePaused'),
-            time: num(sim_time_s, hhmmss),
+    // The actions sit BESIDE the sentence rather than under it: a fourth line of buttons
+    // cost the page ~45 px of height that the worklist below needed. `flex-wrap` drops
+    // them under the text again when the row is too narrow for both.
+    <section className="panel flex shrink-0 flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-2.5">
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="t-meta flex items-center gap-2">
+          <span
+            className="inline-block shrink-0 rounded-full"
+            style={{ width: 6, height: 6, background: running ? 'var(--color-agent)' : 'var(--color-text3)' }}
+            aria-hidden
+          />
+          <span className="num truncate">
+            {t('dash.heroKicker', {
+              status: t(running ? 'dash.cycleLive' : 'dash.cyclePaused'),
+              time: num(sim_time_s, hhmmss),
+            })}
+          </span>
+        </div>
+
+        {/* h2, not h1: the page's <h1> is the route name, rendered once by Shell. */}
+        <h2 className="t-metric text-[var(--color-text1)]">
+          {/* "All clear" is the one headline that must never be reached by accident: an
+              unknown focus count is not an all-clear, so only a finite zero earns it. */}
+          {t(!Number.isFinite(focus) || focus > 0 ? 'dash.heroHeadline' : 'dash.heroHeadlineClear', {
+            greeting,
+            n: num(focus),
+            total: num(f.total),
           })}
-        </span>
+        </h2>
+
+        <p className="t-body text-[var(--color-text2)]">
+          {t('dash.heroSub', {
+            crit: num(critical),
+            routes: num(routesAffected),
+            offline: num(offline),
+          })}
+        </p>
       </div>
 
-      {/* h2, not h1: the page's <h1> is the route name, rendered once by Shell. */}
-      <h2 className="t-metric text-[var(--color-text1)]">
-        {/* "All clear" is the one headline that must never be reached by accident: an
-            unknown focus count is not an all-clear, so only a finite zero earns it. */}
-        {t(!Number.isFinite(focus) || focus > 0 ? 'dash.heroHeadline' : 'dash.heroHeadlineClear', {
-          greeting,
-          n: num(focus),
-          total: num(f.total),
-        })}
-      </h2>
-
-      <p className="t-body text-[var(--color-text2)]">
-        {t('dash.heroSub', {
-          crit: num(critical),
-          routes: num(routesAffected),
-          offline: num(offline),
-        })}
-      </p>
-
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        <Button variant="primary" onClick={() => { location.hash = '#/alerts'; }}>
-          {t('dash.ctaAlerts', { n: num(alerts.length) })}
-        </Button>
-        <Button variant="agent" onClick={() => { location.hash = '#/agentic'; }}>
-          {t('dash.ctaAgent')}
-        </Button>
-        <Button onClick={() => { location.hash = '#/map'; }}>{t('dash.ctaMap')}</Button>
-        <Button onClick={() => { location.hash = '#/health'; }}>
-          {t('dash.ctaHealth', { n: num(offline) })}
-        </Button>
+      {/* The "last updated" clock rides above the actions instead of taking a line of its
+          own under the summary cards - same component, same text, 28 px given back. */}
+      <div className="flex flex-col items-start gap-1.5 min-[1440px]:items-end">
+        <Clock sim_time_s={sim_time_s} wall={false} />
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="primary" onClick={() => { location.hash = '#/alerts'; }}>
+            {t('dash.ctaAlerts', { n: num(alerts.length) })}
+          </Button>
+          <Button variant="agent" onClick={() => { location.hash = '#/agentic'; }}>
+            {t('dash.ctaAgent')}
+          </Button>
+          <Button onClick={() => { location.hash = '#/map'; }}>{t('dash.ctaMap')}</Button>
+          <Button onClick={() => { location.hash = '#/health'; }}>
+            {t('dash.ctaHealth', { n: num(offline) })}
+          </Button>
+        </div>
       </div>
     </section>
   );
@@ -773,47 +812,57 @@ export default function CommandCentre() {
   // it used to be squeezed until the map disappeared. A minimum height lets the page grow
   // and `main` (overflow-auto since D-3) scroll, which is the affordance that was missing.
   // From 1400 up the row is 6-across again and the page fits the viewport exactly as before.
+  //
+  // Reading order, top to bottom: the conclusion (hero), the six numbers (KPI row), then
+  // one working band of three columns, then the four summary cards.
+  //   left   - the exception funnel (the thesis) over the agent feed that acts on it;
+  //   centre - the map, the widest cell, because it is the only spatial view;
+  //   right  - the worklist: a slim "next hour" forecast strip over Priority alerts, which
+  //            owns the whole remaining column height (~6+ rows at 1600x950).
+  // The working band is the only element that flexes; everything else is sized by its
+  // content, so nothing is squeezed into a scroll-within-a-scroll.
   return (
-    <div className="flex h-full min-h-[880px] flex-col gap-2 min-[1400px]:min-h-0">
+    <div className="flex h-full min-h-[920px] flex-col gap-2 min-[1400px]:min-h-0">
       {/* The hero states the conclusion before the numbers restate it (plan §6.3 /
           item 9). Operator mode only - the wall has its own fixed 3-band layout. */}
       <Hero metrics={metrics} alerts={alerts} sim_time_s={snap.sim_time_s} running={running} />
       <KpiRow metrics={metrics} alerts={alerts} wall={false} />
-      <div className="flex min-h-0 gap-2" style={{ flex: '3 1 0%' }}>
-        <div className="flex min-h-0 min-w-0 flex-col gap-2" style={{ flex: '0 0 55%' }}>
+      <div
+        className="grid min-h-0 flex-1 gap-2"
+        style={{ gridTemplateColumns: 'minmax(280px, 0.8fr) minmax(0, 1.3fr) minmax(360px, 1.05fr)' }}
+      >
+        <div className="flex min-h-0 min-w-0 flex-col gap-2">
           <Funnel metrics={metrics} wall={false} />
-          <MapCanvas className="min-h-0 flex-1" />
-        </div>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-          <NextHour />
-          <PriorityAlerts alerts={alerts} wall={false} className="min-h-0 flex-[2]" />
           {/* Item 13: the agent feed is what makes the system read as agentic rather than
               as a rule engine (plan §10.2). Exported by AgentConsole so the same stream
-              renders here and on #/agentic. Sits beside the worklist because a feed needs
-              column width for its timestamp + agent + headline rows - across the bottom
-              band it truncated every entry. Operator mode only. */}
-          <AgentActivityFeed limit={10} />
+              renders here and on #/agentic. It takes whatever the funnel leaves in this
+              column (the feed is `flex-1` inside this wrapper), with a floor so at least
+              three entries always show. Operator mode only. */}
+          <div className="flex min-h-[150px] flex-1 flex-col">
+            <AgentActivityFeed limit={10} />
+          </div>
+        </div>
+        <MapCanvas className="min-h-0 min-w-0" />
+        <div className="flex min-h-0 min-w-0 flex-col gap-2">
+          <NextHour />
+          <PriorityAlerts alerts={alerts} wall={false} className="min-h-0 flex-1" />
         </div>
       </div>
-      {/* Defect A-1 (plan §6.6/§7.2): all four panels open, and the row is a band of its
-          own rather than four auto-height boxes. `flex: 1` against the `flex: 3` above
-          gives it ~a quarter of the free height; each Panel body is `flex-1 overflow-auto`,
-          so every panel fills its cell and scrolls internally instead of clipping. */}
-      {/* auto-fit at 180px keeps all four panels on ONE row down to 1024 (4 x 180 = 720
-          inside a 792 px content area) and reflows below that instead of squeezing four
-          fixed columns into 121 px each. `overflow-auto` is the safety net: if it ever does
-          wrap inside this fixed-height band, the band scrolls rather than the second row
-          painting over the first. */}
+      {/* Defect A-1 (plan §6.6/§7.2): all four panels open, as one card grid of equal
+          cells. The band is sized by its CONTENT (`shrink-0`, rows at least 184 px so the
+          on-time chart has room), not by a flex share of what was left - a flex share is
+          what cut the third route and the foot off every card at 950 px. auto-fit at 220px
+          keeps all four on one row down to ~1100 and reflows below that instead of
+          squeezing four fixed columns. */}
       <div
-        className="grid min-h-0 gap-2 overflow-auto"
-        style={{ flex: '1.3 1 0%', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}
+        className="grid shrink-0 gap-2"
+        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gridAutoRows: 'minmax(184px, auto)' }}
       >
         <MostDelayed metrics={metrics} wall={false} />
         <HighestLoad metrics={metrics} wall={false} />
         <OperatorOnTime metrics={metrics} wall={false} />
         <SystemHealth metrics={metrics} wall={false} />
       </div>
-      <Clock sim_time_s={snap.sim_time_s} wall={false} />
     </div>
   );
 }
